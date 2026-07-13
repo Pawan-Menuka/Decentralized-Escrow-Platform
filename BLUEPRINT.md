@@ -569,7 +569,7 @@ Net: Opus on 2, 3, 5, 8, 9, 12 (six phases — the fund-moving and integration-r
 ### ═══ TIER 1 — Core contract ═══
 
 ### Phase 0 — Scaffold & repo hygiene
-**Status: NOT STARTED**
+**Status: DONE** — Scaffolded manually (no `npx hardhat init`; interactive). Resolved versions: hardhat@2.28.6, @openzeppelin/contracts@5.6.1, @chainlink/contracts@1.4.0, Node v20.19.0 (machine LTS is 20, not the blueprint's target 22 — noted), solc 0.8.24, ethers@6.17.0, typescript@5.9.3. Deviations: (a) `@nomicfoundation/hardhat-network-helpers` pinned to ^1.1.2 (v3 requires Hardhat 3 — incompatible with Hardhat 2.x); (b) toolbox pulls `typescript@7.0.2` (native port) by default which crashes ts-node@10.9.2 — pinned typescript to ^5.8 and installed with `--legacy-peer-deps`, which then required installing all toolbox peer deps explicitly (hardhat-ethers, hardhat-verify, ignition, typechain, chai@^4, etc.); (c) added `tsconfig.json` (ts-node needs it). `npx hardhat compile` → "Nothing to compile" (empty project, expected).
 
 Tasks:
 1. In the repo root: `npx hardhat init` → TypeScript project. If the generated sample uses a newer Hardhat major than 2.x, read its docs/templates before proceeding and adapt (record the actual version here).
