@@ -1,5 +1,7 @@
 # Decentralized Freelance Escrow Platform
 
+[![CI](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml)
+
 A milestone-based escrow protocol for freelance work on Ethereum (Sepolia testnet). A client creates and funds a job split into milestones; a freelancer accepts the job and submits work per milestone; the client approves (releasing funds) or disputes; a trusted arbitrator resolves disputes with an arbitrary split; and if the client goes silent after a submission, funds auto-release to the freelancer once a time-lock expires. All fund movement uses the pull-payment pattern, and the protocol skims a small, capped basis-point fee on every release to the freelancer.
 
 This repository is being built in tiers — an immutable, security-first Solidity contract first (Tier 1), then Chainlink oracle/automation integration (Tier 2), then off-chain IPFS storage and a subgraph (Tier 3), then a full wagmi/RainbowKit frontend (Tier 4). See the roadmap below for what's shipped so far.
@@ -41,12 +43,38 @@ Total infrastructure cost target: **$0** (Sepolia faucets and free tiers through
 
 ## Testing
 
-`FreelanceEscrow.sol` has **105 passing Hardhat tests** across unit, integration, and attack suites (`test/*.ts`), plus dedicated attacker mocks in `contracts/mocks/` (`MaliciousReceiver`, `RevertingReceiver`).
+`FreelanceEscrow.sol` has **119 passing Hardhat tests** across unit, integration, and attack suites (`test/*.ts`), plus dedicated attacker mocks in `contracts/mocks/` (`MaliciousReceiver`, `RevertingReceiver`) and a Chainlink `MockV3Aggregator` for price-feed tests.
 
-- `npx hardhat test` — 105 passing (happy paths, full wrong-caller/wrong-state guard matrix, fee accounting to the wei, four integration lifecycles, reentrancy + pull-payment-DoS attack tests).
-- `npx hardhat coverage` (`.solcover.js` skips `contracts/mocks`) — **96.88% lines, 92.86% branches** on `FreelanceEscrow.sol`.
+- `npx hardhat test` — 119 passing (happy paths, full wrong-caller/wrong-state guard matrix, fee accounting to the wei, four integration lifecycles, reentrancy + pull-payment-DoS attack tests, and USD price-feed conversion incl. staleness/invalid-price handling).
+- `npx hardhat coverage` (`.solcover.js` skips `contracts/mocks`) — **99.13% lines, 93.16% branches, 100% functions** on `FreelanceEscrow.sol`.
 - Attack tests prove: (1) a malicious freelancer contract that re-enters `withdraw()` from its own `receive()` gains nothing beyond its credited balance — the whole transaction reverts (`EthTransferFailed`), since `nonReentrant` + the zero-before-transfer (CEI) pattern block the reentrant call; (2) **the pull-payment thesis** — a freelancer contract that unconditionally reverts on receiving ETH can NEVER brick the client's `approveMilestone` (no external call is made there), only its own subsequent `withdraw()` fails, isolating the damage to the bad actor.
-- Remaining uncovered branches are documented, not overlooked: two idempotent no-op guards in the internal scan-set helpers (`_addActive`/`_removeActive`) that are unreachable through the public API given the state-machine guards; the `createJobUsd` stub and its `_stub()` helper (Phase 8, not yet implemented); the `token != address(0)` ERC-20 branches in `withdraw`/`withdrawFees` (Phase 10, dead until ERC-20 support lands); and a few `nonReentrant` "already entered" branches on functions that make no external call themselves and so can only be reached via genuine cross-function reentrancy (not exercised — the only external-call surfaces, `withdraw`/`withdrawFees`, are the ones the attack tests target).
+- Remaining uncovered branches are documented, not overlooked: two idempotent no-op guards in the internal scan-set helpers (`_addActive`/`_removeActive`) that are unreachable through the public API given the state-machine guards; the `token != address(0)` ERC-20 branches in `withdraw`/`withdrawFees` (Phase 10, dead until ERC-20 support lands); and a few `nonReentrant` "already entered" branches on functions that make no external call themselves and so can only be reached via genuine cross-function reentrancy (not exercised — the only external-call surfaces, `withdraw`/`withdrawFees`, are the ones the attack tests target).
+
+### Fuzz / invariant tests (Foundry)
+
+A hybrid Foundry suite (`foundry/test/`) runs property-based invariant tests via a bounded stateful handler that drives random full-lifecycle sequences:
+
+- **Conservation** — the escrow's ETH balance always equals `deposited − withdrawn − feesWithdrawn`; no wei is created, destroyed, or stranded.
+- **Solvency** — the balance is always ≥ every outstanding withdrawable balance plus accrued fees (the contract can always pay what it owes).
+- **Fee cap** — `feeBps` never exceeds `MAX_FEE_BPS`, even though the handler calls `setFeeBps` with unbounded random values.
+
+These run in CI on every push (`forge test`).
+
+## Gas
+
+The contract was written gas-consciously from the outset — tightly packed structs (the `Job` struct fits 5 slots), custom errors instead of `require` strings, `calldata` arrays, and pull-payments — so the meaningful savings were captured by design rather than a later pass. A deliberate post-hoc optimization merged `createJob`'s two loops (validate-and-sum, then store) into a single pass with an `unchecked` increment:
+
+| Function | Before (avg) | After (avg) |
+|---|---|---|
+| `createJob` (2 milestones) | 172,184 | 171,995 |
+
+The ~190-gas delta is small on purpose to report honestly: milestone `SSTORE`s dominate `createJob`'s cost and are unavoidable, so once the struct packing and custom errors were in place there was little left to win. Measured with `hardhat-gas-reporter` (`REPORT_GAS=true npx hardhat test`).
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for the full threat model — reentrancy (pull-payments + CEI + `nonReentrant`), the pull-over-push griefing defense, the pause-excludes-withdraw circuit breaker, bounded iteration, the single-arbitrator trust assumption, owner powers and the hard fee cap, the arbitrator snapshot, and timestamp tolerance.
+
+Static analysis (Slither, `crytic/slither-action`) runs in CI configured to fail on medium-or-higher findings; target is zero high/medium.
 
 ## Status
 

@@ -637,7 +637,7 @@ Verify: `npx hardhat coverage` (long timeout, no piping); inspect `coverage/inde
 ---
 
 ### Phase 5 — Hardening: Slither, Foundry invariants, gas pass
-**Status: NOT STARTED**
+**Status: DONE** (Opus). **Tooling routed to CI** (user decision): Slither cannot build locally (native deps need MSVC C++ Build Tools, absent on the Win/Py3.14 dev box) and Foundry is not installed locally, so both run in CI on Ubuntu instead — **Phase 7 CI was brought forward** and now executes `forge test` + `crytic/slither-action` (fail-on: medium) on every push. Delivered: `SECURITY.md` (full threat model — reentrancy/CEI, pull-over-push griefing defense, pause-excludes-withdraw, bounded iteration, arbitrator snapshot, owner powers + fee cap, timestamp tolerance, fee-on-transfer plan, solvency property); Foundry invariant suite `foundry/test/EscrowInvariants.t.sol` + `handlers/EscrowHandler.sol` with 3 invariants (conservation `balance == deposited−withdrawn−feesWithdrawn`, solvency `balance ≥ Σpending+fees`, fee-cap under random `setFeeBps`); gas pass = merged `createJob`'s two loops into one + `unchecked` increment (honest ~190-gas avg win, documented in README — SSTOREs dominate). **NOT verified locally: `forge test` and `slither` — they run for the first time in CI on push; if CI is red, fix from the CI logs.** 105 Hardhat tests still green after the gas reorder.
 
 Tasks:
 1. **[HUMAN if pip missing]** `pip install slither-analyzer`. Run `slither .`; fix all high/medium; document informationals.
@@ -665,7 +665,7 @@ Verify: open the Etherscan URL; "Contract" tab shows readable source.
 ---
 
 ### Phase 7 — CI
-**Status: NOT STARTED**
+**Status: DONE** (brought forward during Phase 5, since Slither/Foundry must run in CI). `.github/workflows/ci.yml` has three jobs on `ubuntu-latest`, all using `npm ci --legacy-peer-deps`: **hardhat** (compile + test + coverage), **foundry** (`forge test -vv` — fuzz/invariants), **slither** (`crytic/slither-action@v0.4.0`, fail-on: medium, using `slither.config.json`). Node 22 in CI. **All three jobs GREEN as of commit b864e38 (run 29268649478)** — Foundry invariants and Slither genuinely execute on every push. CI badge added to README. Debugging notes for future sessions: (1) the npm `forge-std` mirror lays sources at package root, not `src/`, AND omits `ds-test` — so CI vendors forge-std via `git clone --recursive` into `lib/` and remappings point there; (2) `crytic/slither-action` runs its own `npm install` without `--legacy-peer-deps`, fixed by a project `.npmrc` (`legacy-peer-deps=true`); (3) Slither's only medium finding was `uninitialized-local` on `createJob.total`, fixed with `= 0`; remaining low/informational findings documented in SECURITY.md.
 
 Tasks: commit `.github/workflows/ci.yml` (§7). Push; **[HUMAN or gh CLI]** confirm all three jobs green. Add CI badge to README.
 
@@ -679,7 +679,7 @@ Verify: `gh run list --limit 3` or the Actions tab.
 ### ═══ TIER 2 — Chainlink core ═══
 
 ### Phase 8 — Price Feeds (USD-denominated jobs)
-**Status: NOT STARTED**
+**Status: DONE** (Opus). Constructor now takes an immutable `address _ethUsdFeed` (`AggregatorV3Interface`, path `@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol`). Implemented `createJobUsd(freelancer, usdAmounts[8dp], timelock)`: reads the feed once via `_readEthUsdPrice` (guards `answer > 0` → `InvalidPrice`, `block.timestamp - updatedAt > PRICE_STALENESS_THRESHOLD(1h)` → `StalePrice`), converts `wei = usdAmount(8dp) * 1e18 / price(8dp)`, requires `msg.value == Σwei`, stores the job in ETH terms (thereafter a normal ETH job), emits `JobCreated` + new `JobCreatedUsd(jobId, usdTotal, ethUsdPrice)`. **Removed the `_stub`/`_stubTouch`/`NotImplemented` machinery** (createJobUsd was the last stub). Test mock: re-export `contracts/mocks/MockV3Aggregator.sol` → Chainlink's `shared/mocks/MockV3Aggregator.sol` (pragma `^0.8.0`, deploy by name in tests). Updated all deploy sites (helpers, skeleton, attacks constructor-guards + new zero-feed guard, Foundry handler) for the 3-arg constructor. **119 Hardhat tests passing; coverage 99.13% lines / 93.16% branch / 100% funcs.** Conversion unit-tested at $2000 & $2500, staleness + zero + negative price reverts, exact-msg.value, and a full USD-job lifecycle. **Deploy/verify deferred:** Phase 6 was skipped per user, so the constructor's ABI change is NOT yet redeployed — whenever Phase 6 runs, deploy with the Sepolia ETH/USD feed `0x694AA1769357215DE4FAC081bf1f309aDC325306`. `createJobUsd` stays ETH-only (USD→USDC needs no oracle; Phase 10 note).
 
 Tasks:
 1. Constructor takes `address ethUsdFeed` (immutable). Implement `createJobUsd` per §5 with staleness + positivity guards and the documented decimal conversion. Store the job in ETH terms (milestone `amount` = converted wei) — conversion happens once, at funding; the job is thereafter a normal ETH job. Emit `JobCreated` with the ETH total (add a separate `JobCreatedUsd(jobId, usdTotal, ethUsdPrice)` event for the subgraph).

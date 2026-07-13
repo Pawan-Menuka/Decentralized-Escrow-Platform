@@ -7,8 +7,21 @@ export const BPS_DENOM = 10_000n;
 export const DEFAULT_TIMELOCK = 7 * 24 * 60 * 60; // 7 days (within [MIN,MAX])
 export const ZERO = ethers.ZeroAddress;
 
+// ETH/USD price feed (8 decimals, like Chainlink's real feed): $2000.00 per ETH.
+export const ETH_USD_DECIMALS = 8;
+export const ETH_USD_PRICE = 2000n * 10n ** 8n; // 200000000000
+/** USD helper: dollars -> 8-decimal feed units. usd(500) === $500.00. */
+export function usd(dollars: number): bigint {
+  return BigInt(Math.round(dollars * 100)) * 10n ** 6n; // *100 cents then *1e6 -> 8 decimals
+}
+/** Converts an 8-decimal USD amount to wei at ETH_USD_PRICE, matching the contract. */
+export function usdToWei(usdAmount: bigint, price: bigint = ETH_USD_PRICE): bigint {
+  return (usdAmount * 10n ** 18n) / price;
+}
+
 export interface Deployed {
   escrow: FreelanceEscrow;
+  feed: any; // MockV3Aggregator
   owner: HardhatEthersSigner;
   client: HardhatEthersSigner;
   freelancer: HardhatEthersSigner;
@@ -16,13 +29,20 @@ export interface Deployed {
   other: HardhatEthersSigner;
 }
 
-/** Deploys a fresh escrow with a 1% fee and a dedicated arbitrator signer. */
+/** Deploys a fresh escrow with a 1% fee, a dedicated arbitrator, and a mock ETH/USD feed. */
 export async function deployFixture(): Promise<Deployed> {
   const [owner, client, freelancer, arbitrator, other] = await ethers.getSigners();
+  const Feed = await ethers.getContractFactory("MockV3Aggregator");
+  const feed = await Feed.deploy(ETH_USD_DECIMALS, ETH_USD_PRICE);
+  await feed.waitForDeployment();
   const Factory = await ethers.getContractFactory("FreelanceEscrow");
-  const escrow = (await Factory.connect(owner).deploy(FEE_BPS, arbitrator.address)) as unknown as FreelanceEscrow;
+  const escrow = (await Factory.connect(owner).deploy(
+    FEE_BPS,
+    arbitrator.address,
+    await feed.getAddress(),
+  )) as unknown as FreelanceEscrow;
   await escrow.waitForDeployment();
-  return { escrow, owner, client, freelancer, arbitrator, other };
+  return { escrow, feed, owner, client, freelancer, arbitrator, other };
 }
 
 /** Creates and funds a job (ETH). Returns the jobId and the total funded. */
