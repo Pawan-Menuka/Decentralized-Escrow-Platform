@@ -1,0 +1,444 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
+/// @title FreelanceEscrow
+/// @notice A milestone-based escrow protocol for freelance work. A client creates and
+///         fully funds a job split into milestones; a freelancer accepts the job and
+///         submits work per milestone; the client approves (releasing funds via a
+///         pull-payment) or disputes; an arbitrator resolves disputes with an arbitrary
+///         split; client silence after submission auto-releases funds after a time-lock.
+/// @dev Single immutable contract holding all jobs (struct + mapping + counter pattern,
+///      no proxy/factory). Funds move exclusively via pull-payments
+///      (`pendingWithdrawals`) credited during state transitions and claimed later via
+///      `withdraw`, per the Checks-Effects-Interactions pattern and `nonReentrant`.
+///      A protocol fee (basis points, capped at `MAX_FEE_BPS`) is skimmed from every
+///      amount that flows to the freelancer (approval, auto-release, or the
+///      freelancer's share of a dispute resolution) — never from client refunds.
+///
+///      This file (Phase 1 of the build) contains the complete data model, storage
+///      layout, custom errors, events, the constructor, the `_key` helper, and fully
+///      implemented views. Every other external/public function is a typed stub that
+///      reverts with `NotImplemented()` until later phases (2, 3, 8, 9, 10) implement
+///      its logic exactly per the guard/effects spec in the project blueprint.
+contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
+    // ---------------------------------------------------------------------
+    // Enums
+    // ---------------------------------------------------------------------
+
+    /// @notice Lifecycle states of a Job.
+    /// @dev `NONE` (default 0) doubles as the "does not exist" sentinel — a job read
+    ///      from an empty mapping slot has state `NONE`.
+    enum JobState {
+        NONE,
+        FUNDED,
+        IN_PROGRESS,
+        COMPLETED,
+        DISPUTED,
+        CANCELLED
+    }
+
+    /// @notice Lifecycle states of a single Milestone.
+    /// @dev `NONE` (default 0) doubles as the "does not exist" sentinel — a milestone
+    ///      read from an empty mapping slot has state `NONE`. Terminal states are
+    ///      `APPROVED`, `AUTO_RELEASED`, and `RESOLVED`.
+    enum MilestoneState {
+        NONE,
+        PENDING,
+        SUBMITTED,
+        APPROVED,
+        DISPUTED,
+        RESOLVED,
+        AUTO_RELEASED
+    }
+
+    // ---------------------------------------------------------------------
+    // Structs
+    // ---------------------------------------------------------------------
+
+    /// @notice A single escrowed job between a client and a freelancer.
+    /// @dev Packed deliberately across storage slots (see blueprint §4.2):
+    ///      slot0 {client, createdAt, timelock, state}; slot1 {freelancer,
+    ///      milestoneCount, approvedCount}; slot2 {token}; slot3 {arbitrator};
+    ///      slot4 {totalAmount}. Enum-typed fields are stored as `uint8` by the
+    ///      compiler, matching the byte budget in the blueprint.
+    struct Job {
+        /// @notice The party who created and funded the job.
+        address client;
+        /// @notice Unix timestamp (seconds) the job was created.
+        uint48 createdAt;
+        /// @notice Seconds of client silence after submission before auto-release.
+        uint32 timelock;
+        /// @notice Current lifecycle state of the job.
+        JobState state;
+        /// @notice The party who accepts and performs the work.
+        address freelancer;
+        /// @notice Total number of milestones in this job.
+        uint16 milestoneCount;
+        /// @notice Number of milestones that have reached a terminal state.
+        uint16 approvedCount;
+        /// @notice Payment token; `address(0)` means native ETH. ERC-20 enabled Phase 10.
+        address token;
+        /// @notice Arbitrator snapshotted at creation time (does not track the global
+        ///         arbitrator if it is later changed via `setArbitrator`).
+        address arbitrator;
+        /// @notice Sum of all milestone amounts, in token/wei units.
+        uint256 totalAmount;
+    }
+
+    /// @notice A single milestone within a Job.
+    struct Milestone {
+        /// @notice Amount owed for this milestone, in wei/token units.
+        uint128 amount;
+        /// @notice Timestamp of the latest submission (0 if never submitted).
+        uint40 submittedAt;
+        /// @notice Current lifecycle state of the milestone.
+        MilestoneState state;
+        /// @notice IPFS CID of the submitted deliverable (empty until submitted).
+        /// @dev Stored as `string`, not `bytes32`, because CIDv1 can exceed 32 bytes.
+        string deliverableCid;
+    }
+
+    // ---------------------------------------------------------------------
+    // Storage
+    // ---------------------------------------------------------------------
+
+    /// @notice The next job id to be assigned; ids start at 1 (0 = nonexistent).
+    uint256 public jobCounter;
+
+    /// @notice jobId => Job.
+    mapping(uint256 => Job) public jobs;
+
+    /// @notice jobId => milestone index => Milestone.
+    mapping(uint256 => mapping(uint256 => Milestone)) public milestones;
+
+    /// @notice token => account => withdrawable amount. `token == address(0)` is ETH.
+    mapping(address => mapping(address => uint256)) public pendingWithdrawals;
+
+    /// @notice token => owner-withdrawable accrued protocol fees.
+    mapping(address => uint256) public accruedFees;
+
+    /// @notice Protocol fee in basis points, applied to freelancer-bound releases.
+    uint16 public feeBps;
+
+    /// @notice Hard cap on `feeBps`: 500 = 5%.
+    uint16 public constant MAX_FEE_BPS = 500;
+
+    /// @notice Minimum allowed job timelock.
+    uint32 public constant MIN_TIMELOCK = 1 days;
+
+    /// @notice Maximum allowed job timelock.
+    uint32 public constant MAX_TIMELOCK = 90 days;
+
+    /// @notice Maximum milestones per job (bounds loops in `createJob`).
+    uint16 public constant MAX_MILESTONES = 50;
+
+    /// @notice Global arbitrator address, snapshotted into each Job at creation time.
+    /// @dev Changing this does not retroactively change who arbitrates existing jobs —
+    ///      see SECURITY.md (written in Phase 5).
+    address public arbitrator;
+
+    /// @notice Packed keys (see `_key`) of milestones currently in state `SUBMITTED`.
+    /// @dev Scan set for Chainlink Automation (Phase 9); maintained via swap-and-pop.
+    uint256[] public activeSubmitted;
+
+    /// @notice packedKey => index+1 in `activeSubmitted` (0 = absent).
+    mapping(uint256 => uint256) internal activeSubmittedIndex;
+
+    // ---------------------------------------------------------------------
+    // Custom errors (complete list per blueprint §4.5 — no `require` strings)
+    // ---------------------------------------------------------------------
+
+    error JobNotFound();
+    error MilestoneNotFound();
+    error NotClient();
+    error NotFreelancer();
+    error NotArbitrator();
+    /// @dev raiseDispute: caller is neither client nor freelancer.
+    error NotParticipant();
+    error InvalidJobState(uint8 current);
+    error InvalidMilestoneState(uint8 current);
+    error ZeroAddress();
+    /// @dev client == freelancer.
+    error SelfDealing();
+    error NoMilestones();
+    error TooManyMilestones();
+    error ZeroMilestoneAmount();
+    /// @dev msg.value != sum(amounts).
+    error ValueMismatch(uint256 expected, uint256 actual);
+    error TimelockOutOfRange();
+    error TimelockNotExpired();
+    /// @dev freelancerBps > 10000 or fee > MAX_FEE_BPS.
+    error InvalidBps();
+    error NothingToWithdraw();
+    error EthTransferFailed();
+    /// @dev token != address(0) before Phase 10.
+    error TokenNotSupported();
+    /// @dev Phase 8.
+    error StalePrice();
+    /// @dev Phase 8.
+    error InvalidPrice();
+
+    /// @dev Temporary Phase-1 placeholder. Every function that reverts with this is a
+    ///      typed stub whose logic ships in a later phase (2, 3, 8, 9, or 10). This
+    ///      error must be deleted once every stub is implemented (end of Phase 3).
+    error NotImplemented();
+
+    // ---------------------------------------------------------------------
+    // Events (complete list per blueprint §4.6 — one per state change)
+    // ---------------------------------------------------------------------
+
+    event JobCreated(
+        uint256 indexed jobId,
+        address indexed client,
+        address indexed freelancer,
+        address token,
+        uint256 totalAmount,
+        uint256 milestoneCount,
+        uint32 timelock
+    );
+    event JobAccepted(uint256 indexed jobId, address indexed freelancer);
+    event JobCancelled(uint256 indexed jobId);
+    event JobCompleted(uint256 indexed jobId);
+    event MilestoneSubmitted(uint256 indexed jobId, uint256 indexed mIndex, string deliverableCid);
+    event MilestoneApproved(uint256 indexed jobId, uint256 indexed mIndex, uint256 amount, uint256 fee);
+    event MilestoneRejected(uint256 indexed jobId, uint256 indexed mIndex, string reason);
+    event MilestoneAutoReleased(uint256 indexed jobId, uint256 indexed mIndex, uint256 amount, uint256 fee);
+    event DisputeRaised(
+        uint256 indexed jobId, uint256 indexed mIndex, address indexed raisedBy, string evidenceCid
+    );
+    event DisputeResolved(
+        uint256 indexed jobId,
+        uint256 indexed mIndex,
+        uint16 freelancerBps,
+        uint256 freelancerAmount,
+        uint256 clientAmount,
+        uint256 fee
+    );
+    event Withdrawal(address indexed account, address indexed token, uint256 amount);
+    event FeeUpdated(uint16 oldBps, uint16 newBps);
+    event FeesWithdrawn(address indexed token, uint256 amount);
+    event ArbitratorUpdated(address indexed oldArbitrator, address indexed newArbitrator);
+
+    // ---------------------------------------------------------------------
+    // Constructor
+    // ---------------------------------------------------------------------
+
+    /// @notice Deploys the escrow with an initial protocol fee and arbitrator.
+    /// @param _feeBps Initial protocol fee in basis points; must be `<= MAX_FEE_BPS`.
+    /// @param _arbitrator Initial global arbitrator; must be nonzero.
+    constructor(uint16 _feeBps, address _arbitrator) Ownable(msg.sender) {
+        if (_feeBps > MAX_FEE_BPS) revert InvalidBps();
+        if (_arbitrator == address(0)) revert ZeroAddress();
+        feeBps = _feeBps;
+        arbitrator = _arbitrator;
+    }
+
+    // ---------------------------------------------------------------------
+    // Internal helpers
+    // ---------------------------------------------------------------------
+
+    /// @notice Packs a job id and milestone index into a single scan-set key.
+    /// @dev `jobId` occupies the high bits, `mIndex` the low 32 bits. Used to
+    ///      maintain `activeSubmitted` / `activeSubmittedIndex` for Chainlink
+    ///      Automation (Phase 9).
+    /// @param jobId The job id.
+    /// @param mIndex The milestone index within the job.
+    /// @return The packed key.
+    function _key(uint256 jobId, uint256 mIndex) internal pure returns (uint256) {
+        return (jobId << 32) | mIndex;
+    }
+
+    /// @dev Phase-1-only scratch slot written by `_stub()`. Deliberately NOT part of
+    ///      the blueprint §4.3 storage layout — appended after it and deleted alongside
+    ///      `_stub`/`NotImplemented` once every stub below is implemented, so it never
+    ///      permanently disturbs the spec'd layout.
+    uint256 private _stubTouch;
+
+    /// @dev Phase-1-only helper: reverts with `NotImplemented`. The guard is written as
+    ///      a runtime condition on `msg.sender` (always true, but not something solc can
+    ///      prove statically) rather than an unconditional `revert`, and the function
+    ///      performs one dead (never-reached) storage write, so solc's mutability
+    ///      analysis does not suggest restricting the calling stub functions to `view` —
+    ///      they will genuinely mutate state once implemented. Delete alongside
+    ///      `NotImplemented` and `_stubTouch` once every stub below is implemented.
+    function _stub() private {
+        if (msg.sender != address(0)) revert NotImplemented();
+        _stubTouch = block.number;
+    }
+
+    // ---------------------------------------------------------------------
+    // External / public function surface — Phase 1 stubs
+    // (implemented in Phases 2, 3, 8, 9, 10 exactly per blueprint §5)
+    // ---------------------------------------------------------------------
+
+    /// @notice Creates and fully funds a new job in native ETH.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    /// @return jobId The id assigned to the new job.
+    function createJob(address /* freelancer */, address /* token */, uint128[] calldata /* amounts */, uint32 /* timelock */)
+        external
+        payable
+        whenNotPaused
+        returns (uint256 jobId)
+    {
+        _stub();
+        jobId = 0;
+    }
+
+    /// @notice Creates and fully funds a new job denominated in USD, converted to ETH
+    ///         via a Chainlink price feed at call time.
+    /// @dev STUB (Phase 8). Reverts `NotImplemented`.
+    /// @return jobId The id assigned to the new job.
+    function createJobUsd(address /* freelancer */, uint128[] calldata /* usdAmounts */, uint32 /* timelock */)
+        external
+        payable
+        whenNotPaused
+        returns (uint256 jobId)
+    {
+        _stub();
+        jobId = 0;
+    }
+
+    /// @notice Freelancer accepts a funded job, beginning work.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function acceptJob(uint256 /* jobId */) external whenNotPaused {
+        _stub();
+    }
+
+    /// @notice Client cancels a job before it is accepted, refunding themselves in full.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function cancelJob(uint256 /* jobId */) external whenNotPaused {
+        _stub();
+    }
+
+    /// @notice Freelancer submits a deliverable for a pending milestone.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function submitMilestone(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* deliverableCid */)
+        external
+        whenNotPaused
+    {
+        _stub();
+    }
+
+    /// @notice Client approves a submitted milestone, crediting the freelancer.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function approveMilestone(uint256 /* jobId */, uint256 /* mIndex */) external whenNotPaused nonReentrant {
+        _stub();
+    }
+
+    /// @notice Client rejects a submitted milestone, returning it to PENDING.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function rejectMilestone(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* reason */)
+        external
+        whenNotPaused
+    {
+        _stub();
+    }
+
+    /// @notice Client or freelancer raises a dispute on a submitted milestone.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function raiseDispute(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* evidenceCid */)
+        external
+        whenNotPaused
+    {
+        _stub();
+    }
+
+    /// @notice Arbitrator resolves a disputed milestone with an arbitrary bps split.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function resolveDispute(uint256 /* jobId */, uint256 /* mIndex */, uint16 /* freelancerBps */)
+        external
+        whenNotPaused
+        nonReentrant
+    {
+        _stub();
+    }
+
+    /// @notice Anyone triggers auto-release of a submitted milestone whose timelock
+    ///         has expired.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function claimTimelockRelease(uint256 /* jobId */, uint256 /* mIndex */) external whenNotPaused nonReentrant {
+        _stub();
+    }
+
+    /// @notice Withdraws the caller's pending balance for a given token.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`. Intentionally NOT
+    ///      `whenNotPaused` — funds must always be exitable per blueprint §3/§5.
+    function withdraw(address /* token */) external nonReentrant {
+        _stub();
+    }
+
+    /// @notice Owner sets the protocol fee (basis points), capped at `MAX_FEE_BPS`.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function setFeeBps(uint16 /* _feeBps */) external onlyOwner {
+        _stub();
+    }
+
+    /// @notice Owner sets the global arbitrator for future jobs.
+    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
+    function setArbitrator(address /* _arbitrator */) external onlyOwner {
+        _stub();
+    }
+
+    /// @notice Owner withdraws accrued protocol fees for a given token.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function withdrawFees(address /* token */, address /* to */) external onlyOwner nonReentrant {
+        _stub();
+    }
+
+    /// @notice Owner pauses state-changing entry points (circuit breaker).
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function pause() external onlyOwner {
+        _stub();
+    }
+
+    /// @notice Owner unpauses the contract.
+    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    function unpause() external onlyOwner {
+        _stub();
+    }
+
+    // ---------------------------------------------------------------------
+    // Views (implemented now — trivial, unblock testing)
+    // ---------------------------------------------------------------------
+
+    /// @notice Returns the full Job struct for a given job id.
+    /// @param jobId The job id to look up.
+    /// @return The Job struct (all-zero / `NONE` state if it does not exist).
+    function getJob(uint256 jobId) external view returns (Job memory) {
+        return jobs[jobId];
+    }
+
+    /// @notice Returns a single Milestone struct.
+    /// @param jobId The job id.
+    /// @param mIndex The milestone index within the job.
+    /// @return The Milestone struct (all-zero / `NONE` state if it does not exist).
+    function getMilestone(uint256 jobId, uint256 mIndex) external view returns (Milestone memory) {
+        return milestones[jobId][mIndex];
+    }
+
+    /// @notice Returns every Milestone belonging to a job.
+    /// @param jobId The job id.
+    /// @return result Array of Milestone structs, length `jobs[jobId].milestoneCount`.
+    function getMilestones(uint256 jobId) external view returns (Milestone[] memory result) {
+        uint16 count = jobs[jobId].milestoneCount;
+        result = new Milestone[](count);
+        for (uint256 i = 0; i < count; i++) {
+            result[i] = milestones[jobId][i];
+        }
+    }
+
+    /// @notice Returns the number of packed keys currently tracked in the
+    ///         active-submitted scan set (Chainlink Automation, Phase 9).
+    /// @return The length of `activeSubmitted`.
+    function activeSubmittedLength() external view returns (uint256) {
+        return activeSubmitted.length;
+    }
+
+    /// @notice Allows the contract to receive ETH only via `createJob`'s payable path
+    ///         in later phases; a bare `receive` is intentionally omitted so stray ETH
+    ///         transfers revert rather than becoming stuck with no accounting entry.
+}
