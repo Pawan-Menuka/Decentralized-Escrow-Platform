@@ -17,6 +17,23 @@ contract EscrowInvariants is Test {
     function setUp() public {
         handler = new EscrowHandler();
         escrow = handler.escrow();
+
+        // Restrict the fuzzer to the handler's action functions only (not inherited
+        // Test helpers or public getters).
+        bytes4[] memory selectors = new bytes4[](12);
+        selectors[0] = handler.createJob.selector;
+        selectors[1] = handler.acceptJob.selector;
+        selectors[2] = handler.submitMilestone.selector;
+        selectors[3] = handler.approveMilestone.selector;
+        selectors[4] = handler.rejectMilestone.selector;
+        selectors[5] = handler.raiseDispute.selector;
+        selectors[6] = handler.resolveDispute.selector;
+        selectors[7] = handler.claimTimelockRelease.selector;
+        selectors[8] = handler.cancelJob.selector;
+        selectors[9] = handler.withdraw.selector;
+        selectors[10] = handler.withdrawFees.selector;
+        selectors[11] = handler.setFeeBps.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
 
