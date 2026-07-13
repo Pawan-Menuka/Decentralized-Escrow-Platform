@@ -115,6 +115,11 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     /// @notice jobId => milestone index => Milestone.
     mapping(uint256 => mapping(uint256 => Milestone)) public milestones;
 
+    /// @notice jobId => number of milestones currently in the DISPUTED state.
+    /// @dev Lets `resolveDispute` return a job to IN_PROGRESS/COMPLETED only once every
+    ///      open dispute on it has been resolved, without scanning all milestones.
+    mapping(uint256 => uint16) public disputedCount;
+
     /// @notice token => account => withdrawable amount. `token == address(0)` is ETH.
     mapping(address => mapping(address => uint256)) public pendingWithdrawals;
 
@@ -182,9 +187,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     /// @dev Phase 8.
     error InvalidPrice();
 
-    /// @dev Temporary Phase-1 placeholder. Every function that reverts with this is a
-    ///      typed stub whose logic ships in a later phase (2, 3, 8, 9, or 10). This
-    ///      error must be deleted once every stub is implemented (end of Phase 3).
+    /// @dev Temporary placeholder for not-yet-implemented functions. After Phase 3 the
+    ///      ONLY remaining stub is `createJobUsd` (implemented in Phase 8), so this error
+    ///      and the `_stub`/`_stubTouch` machinery are deleted at the end of Phase 8.
     error NotImplemented();
 
     // ---------------------------------------------------------------------
@@ -312,8 +317,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     ///      prove statically) rather than an unconditional `revert`, and the function
     ///      performs one dead (never-reached) storage write, so solc's mutability
     ///      analysis does not suggest restricting the calling stub functions to `view` —
-    ///      they will genuinely mutate state once implemented. Delete alongside
-    ///      `NotImplemented` and `_stubTouch` once every stub below is implemented.
+    ///      they will genuinely mutate state once implemented. After Phase 3 only
+    ///      `createJobUsd` still calls this; delete alongside `NotImplemented` and
+    ///      `_stubTouch` at the end of Phase 8.
     function _stub() private {
         if (msg.sender != address(0)) revert NotImplemented();
         _stubTouch = block.number;
@@ -404,9 +410,19 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     }
 
     /// @notice Client cancels a job before it is accepted, refunding themselves in full.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function cancelJob(uint256 /* jobId */) external whenNotPaused {
-        _stub();
+    /// @dev Pre-acceptance only (state must be FUNDED). The refund is credited via
+    ///      pull-payment with NO fee — cancellation is not a release to the freelancer.
+    /// @param jobId The job to cancel; caller must be its client.
+    function cancelJob(uint256 jobId) external whenNotPaused {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.client) revert NotClient();
+        if (job.state != JobState.FUNDED) revert InvalidJobState(uint8(job.state));
+
+        job.state = JobState.CANCELLED;
+        pendingWithdrawals[job.token][job.client] += job.totalAmount;
+
+        emit JobCancelled(jobId);
     }
 
     /// @notice Freelancer submits a deliverable for a pending milestone.
@@ -462,39 +478,126 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         _maybeCompleteJob(jobId, job);
     }
 
-    /// @notice Client rejects a submitted milestone, returning it to PENDING.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function rejectMilestone(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* reason */)
-        external
-        whenNotPaused
-    {
-        _stub();
+    /// @notice Client rejects a submitted milestone, returning it to PENDING for rework.
+    /// @dev Clears the deliverable + submission timestamp and removes the milestone from
+    ///      the auto-release scan set. The freelancer may resubmit. (Reject-griefing is a
+    ///      known, documented limitation; the freelancer's recourse is `raiseDispute`.)
+    /// @param jobId The job; must be IN_PROGRESS and caller must be its client.
+    /// @param mIndex The milestone index; must exist and be SUBMITTED.
+    /// @param reason Free-text reason, surfaced in the event for the UI/subgraph.
+    function rejectMilestone(uint256 jobId, uint256 mIndex, string calldata reason) external whenNotPaused {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.client) revert NotClient();
+        if (job.state != JobState.IN_PROGRESS) revert InvalidJobState(uint8(job.state));
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.SUBMITTED) revert InvalidMilestoneState(uint8(m.state));
+
+        m.state = MilestoneState.PENDING;
+        m.submittedAt = 0;
+        m.deliverableCid = "";
+        _removeActive(jobId, mIndex);
+
+        emit MilestoneRejected(jobId, mIndex, reason);
     }
 
     /// @notice Client or freelancer raises a dispute on a submitted milestone.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function raiseDispute(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* evidenceCid */)
-        external
-        whenNotPaused
-    {
-        _stub();
+    /// @dev Moves the milestone (and the job) to DISPUTED and pulls the milestone out of
+    ///      the auto-release scan set so a disputed milestone can never auto-release. A
+    ///      job may hold several concurrent disputes (`disputedCount`).
+    /// @param jobId The job; must be IN_PROGRESS or already DISPUTED.
+    /// @param mIndex The milestone index; must exist and be SUBMITTED.
+    /// @param evidenceCid IPFS CID of the disputing party's evidence.
+    function raiseDispute(uint256 jobId, uint256 mIndex, string calldata evidenceCid) external whenNotPaused {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.client && msg.sender != job.freelancer) revert NotParticipant();
+        if (job.state != JobState.IN_PROGRESS && job.state != JobState.DISPUTED) {
+            revert InvalidJobState(uint8(job.state));
+        }
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.SUBMITTED) revert InvalidMilestoneState(uint8(m.state));
+
+        m.state = MilestoneState.DISPUTED;
+        job.state = JobState.DISPUTED;
+        _removeActive(jobId, mIndex);
+        disputedCount[jobId] += 1;
+
+        emit DisputeRaised(jobId, mIndex, msg.sender, evidenceCid);
     }
 
-    /// @notice Arbitrator resolves a disputed milestone with an arbitrary bps split.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function resolveDispute(uint256 /* jobId */, uint256 /* mIndex */, uint16 /* freelancerBps */)
+    /// @notice Arbitrator resolves a disputed milestone, splitting the funds at any ratio.
+    /// @dev Uses the job's SNAPSHOTTED arbitrator (not the current global one). The
+    ///      protocol fee is taken only from the freelancer's share. Rounding dust (≤1 wei)
+    ///      accrues to the client side by construction. Once the job has no remaining open
+    ///      disputes it returns to IN_PROGRESS (or COMPLETED if every milestone is now
+    ///      terminal). No external call is made (pull-payment), `nonReentrant` retained
+    ///      defensively per spec.
+    /// @param jobId The disputed job.
+    /// @param mIndex The disputed milestone index.
+    /// @param freelancerBps Basis points (0..10000) of the milestone awarded to the
+    ///        freelancer; the remainder refunds the client.
+    function resolveDispute(uint256 jobId, uint256 mIndex, uint16 freelancerBps)
         external
         whenNotPaused
         nonReentrant
     {
-        _stub();
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.arbitrator) revert NotArbitrator();
+        if (job.state != JobState.DISPUTED) revert InvalidJobState(uint8(job.state));
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        if (freelancerBps > 10_000) revert InvalidBps();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.DISPUTED) revert InvalidMilestoneState(uint8(m.state));
+
+        uint256 amount = m.amount;
+        uint256 freelancerGross = (amount * freelancerBps) / 10_000;
+        uint256 clientAmount = amount - freelancerGross;
+
+        // Fee is skimmed from the freelancer's share only (mirrors _creditFreelancer).
+        uint256 fee = _creditFreelancer(job, freelancerGross);
+        uint256 freelancerAmount = freelancerGross - fee;
+        if (clientAmount > 0) pendingWithdrawals[job.token][job.client] += clientAmount;
+
+        m.state = MilestoneState.RESOLVED;
+        job.approvedCount += 1;
+        disputedCount[jobId] -= 1;
+
+        if (disputedCount[jobId] == 0) {
+            job.state = JobState.IN_PROGRESS;
+            _maybeCompleteJob(jobId, job);
+        }
+
+        emit DisputeResolved(jobId, mIndex, freelancerBps, freelancerAmount, clientAmount, fee);
     }
 
-    /// @notice Anyone triggers auto-release of a submitted milestone whose timelock
-    ///         has expired.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function claimTimelockRelease(uint256 /* jobId */, uint256 /* mIndex */) external whenNotPaused nonReentrant {
-        _stub();
+    /// @notice Anyone triggers auto-release of a submitted milestone whose timelock has
+    ///         expired (the client stayed silent past the deadline).
+    /// @dev No caller restriction — this is the anti-griefing escape hatch and is what
+    ///      Chainlink Automation calls in Phase 9. Credits the freelancer net-of-fee via
+    ///      pull-payment. A DISPUTED milestone is not SUBMITTED, so it can never be
+    ///      auto-released here.
+    /// @param jobId The job.
+    /// @param mIndex The milestone index; must exist, be SUBMITTED, and be past deadline.
+    function claimTimelockRelease(uint256 jobId, uint256 mIndex) external whenNotPaused nonReentrant {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.SUBMITTED) revert InvalidMilestoneState(uint8(m.state));
+        if (block.timestamp < uint256(m.submittedAt) + job.timelock) revert TimelockNotExpired();
+
+        uint256 amount = m.amount;
+        m.state = MilestoneState.AUTO_RELEASED;
+        _removeActive(jobId, mIndex);
+        uint256 fee = _creditFreelancer(job, amount);
+        job.approvedCount += 1;
+
+        emit MilestoneAutoReleased(jobId, mIndex, amount, fee);
+        _maybeCompleteJob(jobId, job);
     }
 
     /// @notice Withdraws the caller's pending pull-payment balance for a given token.
@@ -530,10 +633,15 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         emit FeeUpdated(old, _feeBps);
     }
 
-    /// @notice Owner sets the global arbitrator for future jobs.
-    /// @dev STUB (Phase 3). Reverts `NotImplemented`.
-    function setArbitrator(address /* _arbitrator */) external onlyOwner {
-        _stub();
+    /// @notice Owner sets the global arbitrator used for FUTURE jobs.
+    /// @dev Existing jobs keep the arbitrator snapshotted at their creation, so changing
+    ///      this can never move who arbitrates an in-flight dispute.
+    /// @param _arbitrator New global arbitrator; must be nonzero.
+    function setArbitrator(address _arbitrator) external onlyOwner {
+        if (_arbitrator == address(0)) revert ZeroAddress();
+        address old = arbitrator;
+        arbitrator = _arbitrator;
+        emit ArbitratorUpdated(old, _arbitrator);
     }
 
     /// @notice Owner withdraws accrued protocol fees for a given token to an address.

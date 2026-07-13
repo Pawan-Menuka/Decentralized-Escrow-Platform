@@ -611,7 +611,7 @@ Verify: `npx hardhat test`; spot-check gas isn't absurd (`REPORT_GAS=true npx ha
 ---
 
 ### Phase 3 — Unhappy paths
-**Status: NOT STARTED**
+**Status: DONE** (implemented on Opus per routing). Implemented `cancelJob` (FUNDED-only, full no-fee refund via pull-payment), `rejectMilestone` (SUBMITTED→PENDING, clears CID/timestamp, pulls from scan set), `raiseDispute` (client/freelancer, IN_PROGRESS|DISPUTED, milestone→DISPUTED, job→DISPUTED, removes from scan set), `resolveDispute` (snapshotted arbitrator, split via reused `_creditFreelancer` so fee hits only the freelancer share, dust→client, returns job to IN_PROGRESS/COMPLETED only when `disputedCount` hits 0), `claimTimelockRelease` (no caller restriction, `block.timestamp >= submittedAt + timelock`, credits net-of-fee), `setArbitrator` (owner, future jobs only). Added storage `mapping(uint256 => uint16) public disputedCount` (deviation from §4.3 — a per-job counter, spec's preferred approach; documented here). 65 tests passing (added disputes/timelock/cancel). **Correction to the Phase 1 note:** `_stub`/`NotImplemented`/`_stubTouch` are NOT deleted at end of Phase 3 — `createJobUsd` remains stubbed until Phase 8, so the machinery is removed at end of Phase 8 instead (comments updated in-contract).
 
 Tasks:
 1. Implement `cancelJob`, `rejectMilestone`, `raiseDispute`, `resolveDispute` (with per-job `disputedCount`), `claimTimelockRelease`, `setArbitrator` — per §5.
