@@ -536,6 +536,34 @@ jobs:
 
 Each phase = one session of work. Update `Status:` as you go. Commit at phase end.
 
+### 9.0 Model routing (Opus vs Sonnet)
+
+Claude Code runs **one model per session** (set with `/model`); there is no automatic per-phase switch. To spend Opus only where it earns its keep, **set `/model` at the start of each phase to the tag below, then run `/phase`.** Rule of thumb: Opus for phases where a subtle mistake is silent and expensive (fund-moving math, security invariants, tricky oracle/automation integration); Sonnet for phases that are mechanical transcription of this already-normative spec.
+
+| Phase | Model | Why |
+|---|---|---|
+| 0 — Scaffold | **Sonnet** | Boilerplate config; spec is exact |
+| 1 — Data model + skeleton | **Sonnet** | Direct transcription of §4/§5; no judgment calls |
+| 2 — Happy path + pull payments + fee | **Opus** | Money movement, CEI ordering, fee math to the wei |
+| 3 — Unhappy paths (dispute/resolve/timelock) | **Opus** | State-machine correctness; split math; re-entry into IN_PROGRESS/COMPLETED |
+| 4 — Full tests + attack tests + coverage | **Sonnet** | Mechanical given the guard matrix; escalate to Opus only if an attack test won't pass |
+| 5 — Hardening: Slither, invariants, gas | **Opus** | Designing invariants + interpreting findings is the security thesis |
+| 6 — Deploy + verify | **Sonnet** | Scripted, well-trodden |
+| 7 — CI | **Sonnet** | Copy the provided YAML |
+| 8 — Price Feeds (USD) | **Opus** | Decimal/units math is a classic silent-bug source |
+| 9 — Automation (Keepers) | **Opus** | Bounded scan + on-chain re-validation correctness |
+| 10 — ERC-20 / USDC | **Sonnet** | Spec is detailed; **but Opus reviews the received==total balance check** before commit |
+| 11 — IPFS (Pinata) | **Sonnet** | REST plumbing |
+| 12 — Chainlink Functions (PR verify) | **Opus** | Hardest, churn-prone integration; the time-boxed risk |
+| 13 — Subgraph | **Sonnet** | Mechanical event→entity mappings |
+| 14 — Frontend scaffold + wallet | **Sonnet** | Standard wagmi/RainbowKit setup |
+| 15 — Client flow | **Sonnet** | UI wiring; Opus only if USD-quote logic gets subtle |
+| 16 — Freelancer + arbitrator flows | **Sonnet** | UI wiring |
+| 17 — Reads via The Graph + timeline | **Sonnet** | Query plumbing |
+| 18 — Ship (Vercel, demo, video, README) | **Sonnet** | Scripting + prose |
+
+Net: Opus on 2, 3, 5, 8, 9, 12 (six phases — the fund-moving and integration-risk work), Sonnet on the other thirteen. If a Sonnet phase hits a wall (an attack test that won't pass, an invariant violation, a failing verify), stop and hand that phase to Opus rather than pushing through — a wrong "green" here is a redeploy later.
+
 ---
 
 ### ═══ TIER 1 — Core contract ═══
