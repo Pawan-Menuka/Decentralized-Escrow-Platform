@@ -25,6 +25,7 @@
 - Claude sessions run in `.claude\worktrees\*` copies that lack `node_modules`. `npm install` inside the worktree when needed; remind the user their main-repo dev server can't see worktree changes until merged.
 - The user's broadband is intermittently flaky: on sudden RPC/fetch failures, suspect the connection before the code.
 - Installed package versions may be newer than the model's training data. **Before writing integration code against OpenZeppelin, Chainlink, wagmi, viem, or RainbowKit, read the installed package's actual source/exports in `node_modules`** (e.g. check `@openzeppelin/contracts/access/Ownable.sol` for the v5 constructor).
+- **Dependency install rule (learned in Phase 0):** this toolchain has peer-dependency conflicts (gas-reporter v2 vs toolbox; the TypeScript 7 native port crashes ts-node). **Any `npm install` MUST use `--legacy-peer-deps`.** Do NOT delete `node_modules`/`package-lock.json` and reinstall clean — the lockfile already resolves a working set. Keep `typescript` pinned to `^5.x` (never 7.x). Node on this machine is v20.19.0 (CI uses 22 — both are fine).
 
 ---
 
