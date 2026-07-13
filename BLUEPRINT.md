@@ -637,7 +637,7 @@ Verify: `npx hardhat coverage` (long timeout, no piping); inspect `coverage/inde
 ---
 
 ### Phase 5 — Hardening: Slither, Foundry invariants, gas pass
-**Status: NOT STARTED**
+**Status: DONE** (Opus). **Tooling routed to CI** (user decision): Slither cannot build locally (native deps need MSVC C++ Build Tools, absent on the Win/Py3.14 dev box) and Foundry is not installed locally, so both run in CI on Ubuntu instead — **Phase 7 CI was brought forward** and now executes `forge test` + `crytic/slither-action` (fail-on: medium) on every push. Delivered: `SECURITY.md` (full threat model — reentrancy/CEI, pull-over-push griefing defense, pause-excludes-withdraw, bounded iteration, arbitrator snapshot, owner powers + fee cap, timestamp tolerance, fee-on-transfer plan, solvency property); Foundry invariant suite `foundry/test/EscrowInvariants.t.sol` + `handlers/EscrowHandler.sol` with 3 invariants (conservation `balance == deposited−withdrawn−feesWithdrawn`, solvency `balance ≥ Σpending+fees`, fee-cap under random `setFeeBps`); gas pass = merged `createJob`'s two loops into one + `unchecked` increment (honest ~190-gas avg win, documented in README — SSTOREs dominate). **NOT verified locally: `forge test` and `slither` — they run for the first time in CI on push; if CI is red, fix from the CI logs.** 105 Hardhat tests still green after the gas reorder.
 
 Tasks:
 1. **[HUMAN if pip missing]** `pip install slither-analyzer`. Run `slither .`; fix all high/medium; document informationals.
@@ -665,7 +665,7 @@ Verify: open the Etherscan URL; "Contract" tab shows readable source.
 ---
 
 ### Phase 7 — CI
-**Status: NOT STARTED**
+**Status: DONE** (brought forward during Phase 5, since Slither/Foundry must run in CI). `.github/workflows/ci.yml` has three jobs on `ubuntu-latest`, all using `npm ci --legacy-peer-deps`: **hardhat** (compile + test + coverage), **foundry** (`forge test -vv` — fuzz/invariants), **slither** (`crytic/slither-action@v0.4.0`, fail-on: medium, using `slither.config.json`). Node 22 in CI. **All three jobs GREEN as of commit b864e38 (run 29268649478)** — Foundry invariants and Slither genuinely execute on every push. CI badge added to README. Debugging notes for future sessions: (1) the npm `forge-std` mirror lays sources at package root, not `src/`, AND omits `ds-test` — so CI vendors forge-std via `git clone --recursive` into `lib/` and remappings point there; (2) `crytic/slither-action` runs its own `npm install` without `--legacy-peer-deps`, fixed by a project `.npmrc` (`legacy-peer-deps=true`); (3) Slither's only medium finding was `uninitialized-local` on `createJob.total`, fixed with `= 0`; remaining low/informational findings documented in SECURITY.md.
 
 Tasks: commit `.github/workflows/ci.yml` (§7). Push; **[HUMAN or gh CLI]** confirm all three jobs green. Add CI badge to README.
 

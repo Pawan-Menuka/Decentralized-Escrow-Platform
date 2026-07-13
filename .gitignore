@@ -29,3 +29,6 @@ Thumbs.db
 # Frontend build output
 frontend/dist/
 frontend/node_modules/
+
+# Foundry vendored libs (installed in CI)
+lib/
