@@ -354,15 +354,24 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         if (n > MAX_MILESTONES) revert TooManyMilestones();
         if (timelock < MIN_TIMELOCK || timelock > MAX_TIMELOCK) revert TimelockOutOfRange();
 
+        // Gas: single pass validates amounts, sums the total, AND writes each milestone.
+        // Writing before the msg.value check is safe — a mismatch reverts and rolls all
+        // of this back. `unchecked { ++i }` skips a redundant overflow check (i < n <= 50).
+        jobId = ++jobCounter;
         uint256 total;
-        for (uint256 i = 0; i < n; i++) {
+        for (uint256 i = 0; i < n;) {
             uint128 amt = amounts[i];
             if (amt == 0) revert ZeroMilestoneAmount();
             total += amt;
+            Milestone storage m = milestones[jobId][i];
+            m.amount = amt;
+            m.state = MilestoneState.PENDING;
+            unchecked {
+                ++i;
+            }
         }
         if (msg.value != total) revert ValueMismatch(total, msg.value);
 
-        jobId = ++jobCounter;
         Job storage job = jobs[jobId];
         job.client = msg.sender;
         job.createdAt = uint48(block.timestamp);
@@ -373,12 +382,6 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         job.token = token;
         job.arbitrator = arbitrator;
         job.totalAmount = total;
-
-        for (uint256 i = 0; i < n; i++) {
-            Milestone storage m = milestones[jobId][i];
-            m.amount = amounts[i];
-            m.state = MilestoneState.PENDING;
-        }
 
         emit JobCreated(jobId, msg.sender, freelancer, token, total, n, timelock);
     }

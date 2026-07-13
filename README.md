@@ -48,6 +48,32 @@ Total infrastructure cost target: **$0** (Sepolia faucets and free tiers through
 - Attack tests prove: (1) a malicious freelancer contract that re-enters `withdraw()` from its own `receive()` gains nothing beyond its credited balance — the whole transaction reverts (`EthTransferFailed`), since `nonReentrant` + the zero-before-transfer (CEI) pattern block the reentrant call; (2) **the pull-payment thesis** — a freelancer contract that unconditionally reverts on receiving ETH can NEVER brick the client's `approveMilestone` (no external call is made there), only its own subsequent `withdraw()` fails, isolating the damage to the bad actor.
 - Remaining uncovered branches are documented, not overlooked: two idempotent no-op guards in the internal scan-set helpers (`_addActive`/`_removeActive`) that are unreachable through the public API given the state-machine guards; the `createJobUsd` stub and its `_stub()` helper (Phase 8, not yet implemented); the `token != address(0)` ERC-20 branches in `withdraw`/`withdrawFees` (Phase 10, dead until ERC-20 support lands); and a few `nonReentrant` "already entered" branches on functions that make no external call themselves and so can only be reached via genuine cross-function reentrancy (not exercised — the only external-call surfaces, `withdraw`/`withdrawFees`, are the ones the attack tests target).
 
+### Fuzz / invariant tests (Foundry)
+
+A hybrid Foundry suite (`foundry/test/`) runs property-based invariant tests via a bounded stateful handler that drives random full-lifecycle sequences:
+
+- **Conservation** — the escrow's ETH balance always equals `deposited − withdrawn − feesWithdrawn`; no wei is created, destroyed, or stranded.
+- **Solvency** — the balance is always ≥ every outstanding withdrawable balance plus accrued fees (the contract can always pay what it owes).
+- **Fee cap** — `feeBps` never exceeds `MAX_FEE_BPS`, even though the handler calls `setFeeBps` with unbounded random values.
+
+These run in CI on every push (`forge test`).
+
+## Gas
+
+The contract was written gas-consciously from the outset — tightly packed structs (the `Job` struct fits 5 slots), custom errors instead of `require` strings, `calldata` arrays, and pull-payments — so the meaningful savings were captured by design rather than a later pass. A deliberate post-hoc optimization merged `createJob`'s two loops (validate-and-sum, then store) into a single pass with an `unchecked` increment:
+
+| Function | Before (avg) | After (avg) |
+|---|---|---|
+| `createJob` (2 milestones) | 172,184 | 171,995 |
+
+The ~190-gas delta is small on purpose to report honestly: milestone `SSTORE`s dominate `createJob`'s cost and are unavoidable, so once the struct packing and custom errors were in place there was little left to win. Measured with `hardhat-gas-reporter` (`REPORT_GAS=true npx hardhat test`).
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for the full threat model — reentrancy (pull-payments + CEI + `nonReentrant`), the pull-over-push griefing defense, the pause-excludes-withdraw circuit breaker, bounded iteration, the single-arbitrator trust assumption, owner powers and the hard fee cap, the arbitrator snapshot, and timestamp tolerance.
+
+Static analysis (Slither, `crytic/slither-action`) runs in CI configured to fail on medium-or-higher findings; target is zero high/medium.
+
 ## Status
 
 This project is under active build-out. See `BLUEPRINT.md` at the repo root for the full, phase-by-phase implementation plan and live status.
