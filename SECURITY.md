@@ -57,7 +57,14 @@ The core safety property is that the contract can always pay everything it owes:
 
 ## Static analysis
 
-Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on every push, configured to **fail on medium-or-higher** severity findings. `slither.config.json` filters `node_modules` and `contracts/mocks`. Target: zero high/medium findings; any remaining informational findings are reviewed here. (Slither is run in CI rather than locally because its native dependencies require a C toolchain not present on the Windows dev machine.)
+Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on every push, configured to **fail on medium-or-higher** severity findings. `slither.config.json` filters `node_modules` and `contracts/mocks`. (Slither is run in CI rather than locally because its native dependencies require a C toolchain not present on the Windows dev machine.)
+
+**Result: zero high/medium findings.** The remaining low/informational findings are reviewed and accepted:
+
+- **Low-level call** in `withdraw` / `withdrawFees` (`msg.sender.call{value:...}("")`) — this is the intentional pull-payment ETH transfer, guarded by CEI + `nonReentrant`. Using `.call` (rather than `transfer`/`send`) is the recommended pattern post-EIP-1884.
+- **`block.timestamp` comparison** in `claimTimelockRelease` — intended; the time-lock operates on the scale of hours-to-days, where a few seconds of miner tolerance is immaterial (see "Timestamp manipulation" above).
+- **Naming convention** on `setFeeBps(_feeBps)` / `setArbitrator(_arbitrator)` — leading-underscore parameter names, a deliberate convention to distinguish them from the same-named state variables. Cosmetic.
+- **Unindexed address event** — reported against OpenZeppelin's `Pausable.Paused/Unpaused` events, i.e. library code, not this contract.
 
 ## Known limitations / future work
 

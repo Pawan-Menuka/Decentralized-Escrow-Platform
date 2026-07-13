@@ -358,7 +358,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         // Writing before the msg.value check is safe — a mismatch reverts and rolls all
         // of this back. `unchecked { ++i }` skips a redundant overflow check (i < n <= 50).
         jobId = ++jobCounter;
-        uint256 total;
+        uint256 total = 0;
         for (uint256 i = 0; i < n;) {
             uint128 amt = amounts[i];
             if (amt == 0) revert ZeroMilestoneAmount();
