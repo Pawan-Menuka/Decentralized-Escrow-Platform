@@ -5,6 +5,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {AutomationCompatibleInterface} from
+    "@chainlink/contracts/src/v0.8/automation/interfaces/AutomationCompatibleInterface.sol";
 
 /// @title FreelanceEscrow
 /// @notice A milestone-based escrow protocol for freelance work. A client creates and
@@ -20,10 +22,10 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
 ///      amount that flows to the freelancer (approval, auto-release, or the
 ///      freelancer's share of a dispute resolution) — never from client refunds.
 ///
-///      Fund custody, milestone lifecycle, disputes, time-lock release, and USD-priced
-///      job creation (via a Chainlink ETH/USD feed) are all implemented. Remaining
-///      blueprint phases add Chainlink Automation (9) and ERC-20/USDC support (10).
-contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
+///      Fund custody, milestone lifecycle, disputes, time-lock release (manual and via
+///      Chainlink Automation), and USD-priced job creation (Chainlink ETH/USD feed) are
+///      all implemented. The remaining blueprint phase adds ERC-20/USDC support (10).
+contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompatibleInterface {
     // ---------------------------------------------------------------------
     // Enums
     // ---------------------------------------------------------------------
@@ -132,13 +134,21 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     uint16 public constant MAX_FEE_BPS = 500;
 
     /// @notice Minimum allowed job timelock.
-    uint32 public constant MIN_TIMELOCK = 1 days;
+    /// @dev 1 hour (not 1 day) so a registered Chainlink upkeep can be observed firing on
+    ///      the same day during a demo, while still being a realistic floor.
+    uint32 public constant MIN_TIMELOCK = 1 hours;
 
     /// @notice Maximum allowed job timelock.
     uint32 public constant MAX_TIMELOCK = 90 days;
 
     /// @notice Maximum milestones per job (bounds loops in `createJob`).
     uint16 public constant MAX_MILESTONES = 50;
+
+    /// @notice Max entries of `activeSubmitted` that `checkUpkeep` scans per call (gas bound).
+    uint256 public constant UPKEEP_SCAN_LIMIT = 100;
+
+    /// @notice Max milestones released in a single `performUpkeep` (bounds the tx).
+    uint256 public constant UPKEEP_BATCH_LIMIT = 10;
 
     /// @notice Global arbitrator address, snapshotted into each Job at creation time.
     /// @dev Changing this does not retroactively change who arbitrates existing jobs —
@@ -264,6 +274,15 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         return (jobId << 32) | mIndex;
     }
 
+    /// @notice Unpacks a scan-set key back into its job id and milestone index.
+    /// @param k The packed key.
+    /// @return jobId The job id (high bits).
+    /// @return mIndex The milestone index (low 32 bits).
+    function _unkey(uint256 k) internal pure returns (uint256 jobId, uint256 mIndex) {
+        jobId = k >> 32;
+        mIndex = k & 0xFFFFFFFF;
+    }
+
     /// @dev Adds a milestone's packed key to the active-submitted scan set. Idempotent:
     ///      a key already present is left untouched.
     function _addActive(uint256 jobId, uint256 mIndex) internal {
@@ -311,6 +330,20 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
             job.state = JobState.COMPLETED;
             emit JobCompleted(jobId);
         }
+    }
+
+    /// @dev Shared effect for a time-lock auto-release: moves the milestone to
+    ///      AUTO_RELEASED, removes it from the scan set, credits the freelancer net-of-fee,
+    ///      and completes the job if it was the last milestone. Callers (`claimTimelockRelease`
+    ///      and `performUpkeep`) are responsible for the state/timing checks first.
+    function _autoRelease(uint256 jobId, uint256 mIndex, Job storage job, Milestone storage m) internal {
+        uint256 amount = m.amount;
+        m.state = MilestoneState.AUTO_RELEASED;
+        _removeActive(jobId, mIndex);
+        uint256 fee = _creditFreelancer(job, amount);
+        job.approvedCount += 1;
+        emit MilestoneAutoReleased(jobId, mIndex, amount, fee);
+        _maybeCompleteJob(jobId, job);
     }
 
     // ---------------------------------------------------------------------
@@ -641,14 +674,87 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         if (m.state != MilestoneState.SUBMITTED) revert InvalidMilestoneState(uint8(m.state));
         if (block.timestamp < uint256(m.submittedAt) + job.timelock) revert TimelockNotExpired();
 
-        uint256 amount = m.amount;
-        m.state = MilestoneState.AUTO_RELEASED;
-        _removeActive(jobId, mIndex);
-        uint256 fee = _creditFreelancer(job, amount);
-        job.approvedCount += 1;
+        _autoRelease(jobId, mIndex, job, m);
+    }
 
-        emit MilestoneAutoReleased(jobId, mIndex, amount, fee);
-        _maybeCompleteJob(jobId, job);
+    // ---------------------------------------------------------------------
+    // Chainlink Automation (Phase 9)
+    // ---------------------------------------------------------------------
+
+    /// @notice Chainlink Automation hook: scans the active-submitted set (bounded to
+    ///         `UPKEEP_SCAN_LIMIT`) for milestones whose time-lock has expired and returns
+    ///         up to `UPKEEP_BATCH_LIMIT` of them, abi-encoded, for `performUpkeep`.
+    /// @dev `view` (stricter override of the interface's non-view signature). Runs off-chain
+    ///      on the Chainlink node, so the bounds are about keeping `performUpkeep` cheap, not
+    ///      this call. `checkData` is unused.
+    /// @return upkeepNeeded True if at least one expired milestone was found.
+    /// @return performData `abi.encode(uint256[] keys)` of the expired milestone keys.
+    function checkUpkeep(bytes calldata)
+        external
+        view
+        override
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
+        uint256 len = activeSubmitted.length;
+        uint256 scan = len < UPKEEP_SCAN_LIMIT ? len : UPKEEP_SCAN_LIMIT;
+
+        uint256[] memory found = new uint256[](UPKEEP_BATCH_LIMIT);
+        uint256 count = 0;
+        for (uint256 i = 0; i < scan && count < UPKEEP_BATCH_LIMIT;) {
+            uint256 k = activeSubmitted[i];
+            (uint256 jobId, uint256 mIndex) = _unkey(k);
+            Milestone storage m = milestones[jobId][mIndex];
+            // Entries in activeSubmitted are SUBMITTED by construction; the guard is defensive.
+            if (
+                m.state == MilestoneState.SUBMITTED
+                    && block.timestamp >= uint256(m.submittedAt) + jobs[jobId].timelock
+            ) {
+                found[count] = k;
+                unchecked {
+                    ++count;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (count == 0) return (false, bytes(""));
+
+        uint256[] memory keys = new uint256[](count);
+        for (uint256 j = 0; j < count;) {
+            keys[j] = found[j];
+            unchecked {
+                ++j;
+            }
+        }
+        return (true, abi.encode(keys));
+    }
+
+    /// @notice Chainlink Automation hook: releases the milestones identified by `performData`.
+    /// @dev NEVER trusts `performData` — it re-validates every milestone on-chain (still
+    ///      exists, still SUBMITTED, time-lock actually expired) and SKIPS any that fail
+    ///      rather than reverting the whole batch, so a single stale key cannot block the
+    ///      others. Callable by anyone (the Chainlink registry), which is safe precisely
+    ///      because of the re-validation.
+    /// @param performData `abi.encode(uint256[] keys)` from `checkUpkeep`.
+    function performUpkeep(bytes calldata performData) external override whenNotPaused nonReentrant {
+        uint256[] memory keys = abi.decode(performData, (uint256[]));
+        for (uint256 i = 0; i < keys.length;) {
+            (uint256 jobId, uint256 mIndex) = _unkey(keys[i]);
+            Job storage job = jobs[jobId];
+            Milestone storage m = milestones[jobId][mIndex];
+            if (
+                job.state != JobState.NONE && mIndex < job.milestoneCount
+                    && m.state == MilestoneState.SUBMITTED
+                    && block.timestamp >= uint256(m.submittedAt) + job.timelock
+            ) {
+                _autoRelease(jobId, mIndex, job, m);
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /// @notice Withdraws the caller's pending pull-payment balance for a given token.
