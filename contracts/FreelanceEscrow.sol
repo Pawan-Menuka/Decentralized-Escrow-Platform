@@ -439,6 +439,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     ///      price older than `PRICE_STALENESS_THRESHOLD` (`StalePrice`). Returns the price
     ///      as an unsigned 8-decimal value.
     function _readEthUsdPrice() internal view returns (uint256) {
+        // `roundId`/`startedAt`/`answeredInRound` are intentionally unused; `answer` and
+        // `updatedAt` are validated below. Suppress Slither's unused-return false positive.
+        // slither-disable-next-line unused-return
         (, int256 answer,, uint256 updatedAt,) = ethUsdFeed.latestRoundData();
         if (answer <= 0) revert InvalidPrice();
         if (block.timestamp - updatedAt > PRICE_STALENESS_THRESHOLD) revert StalePrice();
