@@ -598,7 +598,7 @@ Verify: `npx hardhat compile`; `npx hardhat test` (the one smoke test passes).
 ---
 
 ### Phase 2 — Happy path + pull payments + fee
-**Status: NOT STARTED**
+**Status: DONE** (implemented on Opus per routing). Implemented ETH-path `createJob`, `acceptJob`, `submitMilestone`, `approveMilestone`, `withdraw`, `setFeeBps`, `withdrawFees`, `pause`/`unpause`, plus internal helpers `_creditFreelancer` (fee read at release time, floor division, dust→client), `_maybeCompleteJob`, and `_addActive`/`_removeActive` (swap-and-pop scan set, maintained from Phase 2 onward). Fee applies only to freelancer-bound funds. `withdraw`/`withdrawFees` ETH branch fully done; non-ETH branch reverts `TokenNotSupported` until Phase 10. 42 tests passing (create/lifecycle/withdraw/admin) incl. fee accounting to the wei and full wrong-caller/wrong-state matrix. Stubs remaining (still revert `NotImplemented` via `_stub`): cancelJob, rejectMilestone, raiseDispute, resolveDispute, claimTimelockRelease, setArbitrator (Phase 3); createJobUsd (Phase 8). Note: `changeEtherBalances` needs the raw tx (not an awaited helper result) — see create.ts "locks the funds" test.
 
 Tasks:
 1. Implement `createJob`, `acceptJob`, `submitMilestone`, `approveMilestone`, `withdraw`, internal `_creditFreelancer` (fee math §4.7) and `_maybeCompleteJob`, plus `setFeeBps`, `withdrawFees`, `pause`/`unpause` — exactly per §5 guard order.

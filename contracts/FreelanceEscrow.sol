@@ -252,6 +252,55 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         return (jobId << 32) | mIndex;
     }
 
+    /// @dev Adds a milestone's packed key to the active-submitted scan set. Idempotent:
+    ///      a key already present is left untouched.
+    function _addActive(uint256 jobId, uint256 mIndex) internal {
+        uint256 k = _key(jobId, mIndex);
+        if (activeSubmittedIndex[k] != 0) return;
+        activeSubmitted.push(k);
+        activeSubmittedIndex[k] = activeSubmitted.length; // store index + 1
+    }
+
+    /// @dev Removes a milestone's packed key from the active-submitted scan set via
+    ///      swap-and-pop, keeping `activeSubmittedIndex` consistent. No-op if absent.
+    function _removeActive(uint256 jobId, uint256 mIndex) internal {
+        uint256 k = _key(jobId, mIndex);
+        uint256 idxPlus1 = activeSubmittedIndex[k];
+        if (idxPlus1 == 0) return;
+        uint256 idx = idxPlus1 - 1;
+        uint256 lastIdx = activeSubmitted.length - 1;
+        if (idx != lastIdx) {
+            uint256 lastKey = activeSubmitted[lastIdx];
+            activeSubmitted[idx] = lastKey;
+            activeSubmittedIndex[lastKey] = idx + 1;
+        }
+        activeSubmitted.pop();
+        activeSubmittedIndex[k] = 0;
+    }
+
+    /// @dev Credits a freelancer's pull-payment balance for `gross`, skimming the
+    ///      protocol fee (read at release time, per spec) into `accruedFees`. The fee
+    ///      applies ONLY to freelancer-bound funds — never to client refunds.
+    /// @param job The job (supplies the payment token and freelancer address).
+    /// @param gross The pre-fee amount owed to the freelancer.
+    /// @return fee The fee skimmed (floor division; dust stays with the client side).
+    function _creditFreelancer(Job storage job, uint256 gross) internal returns (uint256 fee) {
+        fee = (gross * feeBps) / 10_000;
+        uint256 net = gross - fee;
+        pendingWithdrawals[job.token][job.freelancer] += net;
+        if (fee > 0) accruedFees[job.token] += fee;
+    }
+
+    /// @dev Marks a job COMPLETED once every milestone has reached a terminal state
+    ///      (tracked by `approvedCount`). Emits `JobCompleted`. Callers must only invoke
+    ///      this from a non-terminal, non-disputed job context.
+    function _maybeCompleteJob(uint256 jobId, Job storage job) internal {
+        if (job.approvedCount == job.milestoneCount) {
+            job.state = JobState.COMPLETED;
+            emit JobCompleted(jobId);
+        }
+    }
+
     /// @dev Phase-1-only scratch slot written by `_stub()`. Deliberately NOT part of
     ///      the blueprint §4.3 storage layout — appended after it and deleted alongside
     ///      `_stub`/`NotImplemented` once every stub below is implemented, so it never
@@ -276,16 +325,56 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     // ---------------------------------------------------------------------
 
     /// @notice Creates and fully funds a new job in native ETH.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    /// @dev Fund-on-create: `msg.value` must exactly equal the sum of `amounts`. ERC-20
+    ///      tokens are rejected until Phase 10 (`token` must be `address(0)`). The global
+    ///      arbitrator is snapshotted into the job so later `setArbitrator` calls do not
+    ///      affect it.
+    /// @param freelancer The counterparty who will perform the work; nonzero, not the caller.
+    /// @param token Payment token; must be `address(0)` (native ETH) in this phase.
+    /// @param amounts Per-milestone amounts (wei); 1..MAX_MILESTONES entries, each > 0.
+    /// @param timelock Seconds of client silence after a submission before auto-release.
     /// @return jobId The id assigned to the new job.
-    function createJob(address /* freelancer */, address /* token */, uint128[] calldata /* amounts */, uint32 /* timelock */)
+    function createJob(address freelancer, address token, uint128[] calldata amounts, uint32 timelock)
         external
         payable
         whenNotPaused
         returns (uint256 jobId)
     {
-        _stub();
-        jobId = 0;
+        if (freelancer == address(0)) revert ZeroAddress();
+        if (freelancer == msg.sender) revert SelfDealing();
+        if (token != address(0)) revert TokenNotSupported();
+        uint256 n = amounts.length;
+        if (n == 0) revert NoMilestones();
+        if (n > MAX_MILESTONES) revert TooManyMilestones();
+        if (timelock < MIN_TIMELOCK || timelock > MAX_TIMELOCK) revert TimelockOutOfRange();
+
+        uint256 total;
+        for (uint256 i = 0; i < n; i++) {
+            uint128 amt = amounts[i];
+            if (amt == 0) revert ZeroMilestoneAmount();
+            total += amt;
+        }
+        if (msg.value != total) revert ValueMismatch(total, msg.value);
+
+        jobId = ++jobCounter;
+        Job storage job = jobs[jobId];
+        job.client = msg.sender;
+        job.createdAt = uint48(block.timestamp);
+        job.timelock = timelock;
+        job.state = JobState.FUNDED;
+        job.freelancer = freelancer;
+        job.milestoneCount = uint16(n);
+        job.token = token;
+        job.arbitrator = arbitrator;
+        job.totalAmount = total;
+
+        for (uint256 i = 0; i < n; i++) {
+            Milestone storage m = milestones[jobId][i];
+            m.amount = amounts[i];
+            m.state = MilestoneState.PENDING;
+        }
+
+        emit JobCreated(jobId, msg.sender, freelancer, token, total, n, timelock);
     }
 
     /// @notice Creates and fully funds a new job denominated in USD, converted to ETH
@@ -303,9 +392,15 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     }
 
     /// @notice Freelancer accepts a funded job, beginning work.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
-    function acceptJob(uint256 /* jobId */) external whenNotPaused {
-        _stub();
+    /// @param jobId The job to accept; must be FUNDED and caller must be its freelancer.
+    function acceptJob(uint256 jobId) external whenNotPaused {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.freelancer) revert NotFreelancer();
+        if (job.state != JobState.FUNDED) revert InvalidJobState(uint8(job.state));
+
+        job.state = JobState.IN_PROGRESS;
+        emit JobAccepted(jobId, msg.sender);
     }
 
     /// @notice Client cancels a job before it is accepted, refunding themselves in full.
@@ -315,18 +410,56 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     }
 
     /// @notice Freelancer submits a deliverable for a pending milestone.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
-    function submitMilestone(uint256 /* jobId */, uint256 /* mIndex */, string calldata /* deliverableCid */)
+    /// @dev Records the submission timestamp (starts the time-lock clock) and adds the
+    ///      milestone to the active-submitted scan set.
+    /// @param jobId The job; must be IN_PROGRESS and caller must be its freelancer.
+    /// @param mIndex The milestone index; must exist and be PENDING.
+    /// @param deliverableCid IPFS CID of the deliverable.
+    function submitMilestone(uint256 jobId, uint256 mIndex, string calldata deliverableCid)
         external
         whenNotPaused
     {
-        _stub();
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.freelancer) revert NotFreelancer();
+        if (job.state != JobState.IN_PROGRESS) revert InvalidJobState(uint8(job.state));
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.PENDING) revert InvalidMilestoneState(uint8(m.state));
+
+        m.state = MilestoneState.SUBMITTED;
+        m.submittedAt = uint40(block.timestamp);
+        m.deliverableCid = deliverableCid;
+        _addActive(jobId, mIndex);
+
+        emit MilestoneSubmitted(jobId, mIndex, deliverableCid);
     }
 
-    /// @notice Client approves a submitted milestone, crediting the freelancer.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
-    function approveMilestone(uint256 /* jobId */, uint256 /* mIndex */) external whenNotPaused nonReentrant {
-        _stub();
+    /// @notice Client approves a submitted milestone, crediting the freelancer (minus
+    ///         the protocol fee) via pull-payment.
+    /// @dev No external call is made here (pull-over-push): funds are only credited to
+    ///      `pendingWithdrawals`, so a malicious freelancer contract cannot brick
+    ///      approval. `nonReentrant` is retained defensively per spec. Completes the job
+    ///      if this was the last outstanding milestone.
+    /// @param jobId The job; must be IN_PROGRESS and caller must be its client.
+    /// @param mIndex The milestone index; must exist and be SUBMITTED.
+    function approveMilestone(uint256 jobId, uint256 mIndex) external whenNotPaused nonReentrant {
+        Job storage job = jobs[jobId];
+        if (job.state == JobState.NONE) revert JobNotFound();
+        if (msg.sender != job.client) revert NotClient();
+        if (job.state != JobState.IN_PROGRESS) revert InvalidJobState(uint8(job.state));
+        if (mIndex >= job.milestoneCount) revert MilestoneNotFound();
+        Milestone storage m = milestones[jobId][mIndex];
+        if (m.state != MilestoneState.SUBMITTED) revert InvalidMilestoneState(uint8(m.state));
+
+        uint256 amount = m.amount;
+        m.state = MilestoneState.APPROVED;
+        _removeActive(jobId, mIndex);
+        uint256 fee = _creditFreelancer(job, amount);
+        job.approvedCount += 1;
+
+        emit MilestoneApproved(jobId, mIndex, amount, fee);
+        _maybeCompleteJob(jobId, job);
     }
 
     /// @notice Client rejects a submitted milestone, returning it to PENDING.
@@ -364,17 +497,37 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         _stub();
     }
 
-    /// @notice Withdraws the caller's pending balance for a given token.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`. Intentionally NOT
-    ///      `whenNotPaused` — funds must always be exitable per blueprint §3/§5.
-    function withdraw(address /* token */) external nonReentrant {
-        _stub();
+    /// @notice Withdraws the caller's pending pull-payment balance for a given token.
+    /// @dev Follows Checks-Effects-Interactions: the balance is zeroed BEFORE the
+    ///      transfer, and the function is `nonReentrant`. Intentionally NOT
+    ///      `whenNotPaused` — credited funds must always be exitable, even while paused.
+    ///      ERC-20 withdrawals are enabled in Phase 10; until then only ETH balances can
+    ///      exist (createJob rejects non-ETH tokens).
+    /// @param token The token to withdraw; `address(0)` for native ETH.
+    function withdraw(address token) external nonReentrant {
+        uint256 amount = pendingWithdrawals[token][msg.sender];
+        if (amount == 0) revert NothingToWithdraw();
+        pendingWithdrawals[token][msg.sender] = 0;
+
+        if (token == address(0)) {
+            (bool ok,) = msg.sender.call{value: amount}("");
+            if (!ok) revert EthTransferFailed();
+        } else {
+            revert TokenNotSupported(); // ERC-20 path implemented in Phase 10
+        }
+
+        emit Withdrawal(msg.sender, token, amount);
     }
 
     /// @notice Owner sets the protocol fee (basis points), capped at `MAX_FEE_BPS`.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
-    function setFeeBps(uint16 /* _feeBps */) external onlyOwner {
-        _stub();
+    /// @dev The fee is read at release time, so this affects only future releases —
+    ///      documented as an accepted design point.
+    /// @param _feeBps New fee in basis points; must be `<= MAX_FEE_BPS`.
+    function setFeeBps(uint16 _feeBps) external onlyOwner {
+        if (_feeBps > MAX_FEE_BPS) revert InvalidBps();
+        uint16 old = feeBps;
+        feeBps = _feeBps;
+        emit FeeUpdated(old, _feeBps);
     }
 
     /// @notice Owner sets the global arbitrator for future jobs.
@@ -383,22 +536,35 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         _stub();
     }
 
-    /// @notice Owner withdraws accrued protocol fees for a given token.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
-    function withdrawFees(address /* token */, address /* to */) external onlyOwner nonReentrant {
-        _stub();
+    /// @notice Owner withdraws accrued protocol fees for a given token to an address.
+    /// @dev Zero-then-send (CEI) + `nonReentrant`. ERC-20 fee withdrawal enabled Phase 10.
+    /// @param token The token whose accrued fees to withdraw; `address(0)` for ETH.
+    /// @param to Recipient of the fees; must be nonzero.
+    function withdrawFees(address token, address to) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = accruedFees[token];
+        if (amount == 0) revert NothingToWithdraw();
+        accruedFees[token] = 0;
+
+        if (token == address(0)) {
+            (bool ok,) = to.call{value: amount}("");
+            if (!ok) revert EthTransferFailed();
+        } else {
+            revert TokenNotSupported(); // ERC-20 path implemented in Phase 10
+        }
+
+        emit FeesWithdrawn(token, amount);
     }
 
-    /// @notice Owner pauses state-changing entry points (circuit breaker).
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
+    /// @notice Owner pauses state-changing entry points (circuit breaker). `withdraw` is
+    ///         deliberately excluded so funds remain exitable while paused.
     function pause() external onlyOwner {
-        _stub();
+        _pause();
     }
 
     /// @notice Owner unpauses the contract.
-    /// @dev STUB (Phase 2). Reverts `NotImplemented`.
     function unpause() external onlyOwner {
-        _stub();
+        _unpause();
     }
 
     // ---------------------------------------------------------------------
