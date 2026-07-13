@@ -251,15 +251,29 @@ describe("FreelanceEscrow — attack tests & guard-matrix completeness (Phase 4)
     });
 
     describe("constructor guards", function () {
+      const FEED = "0x0000000000000000000000000000000000000001"; // nonzero placeholder
+
       it("reverts deploying with feeBps above MAX_FEE_BPS", async function () {
         const [, arbitrator] = await ethers.getSigners();
         const Factory = await ethers.getContractFactory("FreelanceEscrow");
-        await expect(Factory.deploy(501, arbitrator.address)).to.be.revertedWithCustomError(Factory, "InvalidBps");
+        await expect(Factory.deploy(501, arbitrator.address, FEED)).to.be.revertedWithCustomError(
+          Factory,
+          "InvalidBps",
+        );
       });
 
       it("reverts deploying with a zero-address arbitrator", async function () {
         const Factory = await ethers.getContractFactory("FreelanceEscrow");
-        await expect(Factory.deploy(100, ZERO)).to.be.revertedWithCustomError(Factory, "ZeroAddress");
+        await expect(Factory.deploy(100, ZERO, FEED)).to.be.revertedWithCustomError(Factory, "ZeroAddress");
+      });
+
+      it("reverts deploying with a zero-address price feed", async function () {
+        const [, arbitrator] = await ethers.getSigners();
+        const Factory = await ethers.getContractFactory("FreelanceEscrow");
+        await expect(Factory.deploy(100, arbitrator.address, ZERO)).to.be.revertedWithCustomError(
+          Factory,
+          "ZeroAddress",
+        );
       });
     });
 

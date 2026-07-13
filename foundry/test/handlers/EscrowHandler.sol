@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {FreelanceEscrow} from "../../../contracts/FreelanceEscrow.sol";
+import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/shared/mocks/MockV3Aggregator.sol";
 
 /// @title EscrowHandler
 /// @notice Bounded, stateful actor for the FreelanceEscrow invariant suite. The fuzzer
@@ -32,7 +33,8 @@ contract EscrowHandler is Test {
     uint256 public ghost_totalFeesWithdrawn; // ETH paid out via withdrawFees()
 
     constructor() {
-        escrow = new FreelanceEscrow(INITIAL_FEE_BPS, ARBITRATOR);
+        MockV3Aggregator feed = new MockV3Aggregator(8, 2000e8);
+        escrow = new FreelanceEscrow(INITIAL_FEE_BPS, ARBITRATOR, address(feed));
         actors[0] = address(0xC1);
         actors[1] = address(0xC2);
         actors[2] = address(0xC3);
