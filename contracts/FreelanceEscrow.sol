@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 /// @title FreelanceEscrow
 /// @notice A milestone-based escrow protocol for freelance work. A client creates and
@@ -19,11 +20,9 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///      amount that flows to the freelancer (approval, auto-release, or the
 ///      freelancer's share of a dispute resolution) — never from client refunds.
 ///
-///      This file (Phase 1 of the build) contains the complete data model, storage
-///      layout, custom errors, events, the constructor, the `_key` helper, and fully
-///      implemented views. Every other external/public function is a typed stub that
-///      reverts with `NotImplemented()` until later phases (2, 3, 8, 9, 10) implement
-///      its logic exactly per the guard/effects spec in the project blueprint.
+///      Fund custody, milestone lifecycle, disputes, time-lock release, and USD-priced
+///      job creation (via a Chainlink ETH/USD feed) are all implemented. Remaining
+///      blueprint phases add Chainlink Automation (9) and ERC-20/USDC support (10).
 contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     // ---------------------------------------------------------------------
     // Enums
@@ -146,6 +145,13 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     ///      see SECURITY.md (written in Phase 5).
     address public arbitrator;
 
+    /// @notice Chainlink ETH/USD price feed (8 decimals) used by `createJobUsd`.
+    /// @dev Immutable and injected at construction so tests can supply a mock aggregator.
+    AggregatorV3Interface public immutable ethUsdFeed;
+
+    /// @notice Max age (seconds) of a price answer before `createJobUsd` rejects it.
+    uint256 public constant PRICE_STALENESS_THRESHOLD = 1 hours;
+
     /// @notice Packed keys (see `_key`) of milestones currently in state `SUBMITTED`.
     /// @dev Scan set for Chainlink Automation (Phase 9); maintained via swap-and-pop.
     uint256[] public activeSubmitted;
@@ -187,11 +193,6 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     /// @dev Phase 8.
     error InvalidPrice();
 
-    /// @dev Temporary placeholder for not-yet-implemented functions. After Phase 3 the
-    ///      ONLY remaining stub is `createJobUsd` (implemented in Phase 8), so this error
-    ///      and the `_stub`/`_stubTouch` machinery are deleted at the end of Phase 8.
-    error NotImplemented();
-
     // ---------------------------------------------------------------------
     // Events (complete list per blueprint §4.6 — one per state change)
     // ---------------------------------------------------------------------
@@ -205,6 +206,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         uint256 milestoneCount,
         uint32 timelock
     );
+    /// @notice Emitted alongside `JobCreated` for USD-denominated jobs, recording the USD
+    ///         total (8 decimals) and the ETH/USD price used to convert it at funding time.
+    event JobCreatedUsd(uint256 indexed jobId, uint256 usdTotal, uint256 ethUsdPrice);
     event JobAccepted(uint256 indexed jobId, address indexed freelancer);
     event JobCancelled(uint256 indexed jobId);
     event JobCompleted(uint256 indexed jobId);
@@ -232,14 +236,17 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
     // Constructor
     // ---------------------------------------------------------------------
 
-    /// @notice Deploys the escrow with an initial protocol fee and arbitrator.
+    /// @notice Deploys the escrow with an initial protocol fee, arbitrator, and price feed.
     /// @param _feeBps Initial protocol fee in basis points; must be `<= MAX_FEE_BPS`.
     /// @param _arbitrator Initial global arbitrator; must be nonzero.
-    constructor(uint16 _feeBps, address _arbitrator) Ownable(msg.sender) {
+    /// @param _ethUsdFeed Chainlink ETH/USD aggregator (8 decimals); must be nonzero.
+    constructor(uint16 _feeBps, address _arbitrator, address _ethUsdFeed) Ownable(msg.sender) {
         if (_feeBps > MAX_FEE_BPS) revert InvalidBps();
         if (_arbitrator == address(0)) revert ZeroAddress();
+        if (_ethUsdFeed == address(0)) revert ZeroAddress();
         feeBps = _feeBps;
         arbitrator = _arbitrator;
+        ethUsdFeed = AggregatorV3Interface(_ethUsdFeed);
     }
 
     // ---------------------------------------------------------------------
@@ -306,25 +313,6 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         }
     }
 
-    /// @dev Phase-1-only scratch slot written by `_stub()`. Deliberately NOT part of
-    ///      the blueprint §4.3 storage layout — appended after it and deleted alongside
-    ///      `_stub`/`NotImplemented` once every stub below is implemented, so it never
-    ///      permanently disturbs the spec'd layout.
-    uint256 private _stubTouch;
-
-    /// @dev Phase-1-only helper: reverts with `NotImplemented`. The guard is written as
-    ///      a runtime condition on `msg.sender` (always true, but not something solc can
-    ///      prove statically) rather than an unconditional `revert`, and the function
-    ///      performs one dead (never-reached) storage write, so solc's mutability
-    ///      analysis does not suggest restricting the calling stub functions to `view` —
-    ///      they will genuinely mutate state once implemented. After Phase 3 only
-    ///      `createJobUsd` still calls this; delete alongside `NotImplemented` and
-    ///      `_stubTouch` at the end of Phase 8.
-    function _stub() private {
-        if (msg.sender != address(0)) revert NotImplemented();
-        _stubTouch = block.number;
-    }
-
     // ---------------------------------------------------------------------
     // External / public function surface — Phase 1 stubs
     // (implemented in Phases 2, 3, 8, 9, 10 exactly per blueprint §5)
@@ -386,18 +374,78 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable {
         emit JobCreated(jobId, msg.sender, freelancer, token, total, n, timelock);
     }
 
-    /// @notice Creates and fully funds a new job denominated in USD, converted to ETH
-    ///         via a Chainlink price feed at call time.
-    /// @dev STUB (Phase 8). Reverts `NotImplemented`.
+    /// @notice Creates and fully funds a job whose milestones are quoted in USD, converting
+    ///         each to ETH at the current Chainlink ETH/USD price. Native ETH only.
+    /// @dev `usdAmounts` carry 8 decimals to match the feed (e.g. $500.00 = `500_00000000`).
+    ///      The price is read once at funding; the job is thereafter a normal ETH job.
+    ///      `msg.value` must exactly equal the converted ETH total — the frontend quotes via
+    ///      the same feed immediately before sending. Reverts on a stale or non-positive
+    ///      price. Conversion: `wei = usdAmount(8dp) * 1e18 / price(8dp)` (the 8-decimal
+    ///      scales cancel, leaving a wei-scaled result).
+    /// @param freelancer The counterparty; nonzero, not the caller.
+    /// @param usdAmounts Per-milestone USD amounts, 8 decimals; 1..MAX_MILESTONES, each > 0.
+    /// @param timelock Seconds of client silence after a submission before auto-release.
     /// @return jobId The id assigned to the new job.
-    function createJobUsd(address /* freelancer */, uint128[] calldata /* usdAmounts */, uint32 /* timelock */)
+    function createJobUsd(address freelancer, uint128[] calldata usdAmounts, uint32 timelock)
         external
         payable
         whenNotPaused
         returns (uint256 jobId)
     {
-        _stub();
-        jobId = 0;
+        if (freelancer == address(0)) revert ZeroAddress();
+        if (freelancer == msg.sender) revert SelfDealing();
+        uint256 n = usdAmounts.length;
+        if (n == 0) revert NoMilestones();
+        if (n > MAX_MILESTONES) revert TooManyMilestones();
+        if (timelock < MIN_TIMELOCK || timelock > MAX_TIMELOCK) revert TimelockOutOfRange();
+
+        uint256 price = _readEthUsdPrice(); // 8 decimals; reverts if stale / non-positive
+
+        jobId = ++jobCounter;
+        uint256 ethTotal = 0;
+        uint256 usdTotal = 0;
+        for (uint256 i = 0; i < n;) {
+            uint128 usdAmt = usdAmounts[i];
+            if (usdAmt == 0) revert ZeroMilestoneAmount();
+            uint256 weiAmount = (uint256(usdAmt) * 1e18) / price;
+            if (weiAmount == 0) revert ZeroMilestoneAmount(); // dust: USD too small to fund
+            usdTotal += usdAmt;
+            ethTotal += weiAmount;
+            Milestone storage m = milestones[jobId][i];
+            m.amount = uint128(weiAmount);
+            m.state = MilestoneState.PENDING;
+            unchecked {
+                ++i;
+            }
+        }
+        if (msg.value != ethTotal) revert ValueMismatch(ethTotal, msg.value);
+
+        Job storage job = jobs[jobId];
+        job.client = msg.sender;
+        job.createdAt = uint48(block.timestamp);
+        job.timelock = timelock;
+        job.state = JobState.FUNDED;
+        job.freelancer = freelancer;
+        job.milestoneCount = uint16(n);
+        job.token = address(0);
+        job.arbitrator = arbitrator;
+        job.totalAmount = ethTotal;
+
+        emit JobCreated(jobId, msg.sender, freelancer, address(0), ethTotal, n, timelock);
+        emit JobCreatedUsd(jobId, usdTotal, price);
+    }
+
+    /// @dev Reads the ETH/USD feed, reverting on a non-positive answer (`InvalidPrice`) or a
+    ///      price older than `PRICE_STALENESS_THRESHOLD` (`StalePrice`). Returns the price
+    ///      as an unsigned 8-decimal value.
+    function _readEthUsdPrice() internal view returns (uint256) {
+        // `roundId`/`startedAt`/`answeredInRound` are intentionally unused; `answer` and
+        // `updatedAt` are validated below. Suppress Slither's unused-return false positive.
+        // slither-disable-next-line unused-return
+        (, int256 answer,, uint256 updatedAt,) = ethUsdFeed.latestRoundData();
+        if (answer <= 0) revert InvalidPrice();
+        if (block.timestamp - updatedAt > PRICE_STALENESS_THRESHOLD) revert StalePrice();
+        return uint256(answer);
     }
 
     /// @notice Freelancer accepts a funded job, beginning work.

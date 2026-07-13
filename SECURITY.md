@@ -65,6 +65,7 @@ Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on ever
 - **`block.timestamp` comparison** in `claimTimelockRelease` — intended; the time-lock operates on the scale of hours-to-days, where a few seconds of miner tolerance is immaterial (see "Timestamp manipulation" above).
 - **Naming convention** on `setFeeBps(_feeBps)` / `setArbitrator(_arbitrator)` — leading-underscore parameter names, a deliberate convention to distinguish them from the same-named state variables. Cosmetic.
 - **Unindexed address event** — reported against OpenZeppelin's `Pausable.Paused/Unpaused` events, i.e. library code, not this contract.
+- **Unused return** on `latestRoundData()` in `_readEthUsdPrice` — a known Chainlink false positive: the price feed returns a 5-tuple and the contract deliberately uses only `answer` and `updatedAt` (both validated), skipping `roundId`/`startedAt`/`answeredInRound`. Suppressed inline with `slither-disable-next-line unused-return` and justified at the call site.
 
 ## Known limitations / future work
 

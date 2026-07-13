@@ -7,8 +7,11 @@ describe("FreelanceEscrow — Phase 1 skeleton", function () {
 
   async function deployFixture() {
     const [, arbitrator] = await ethers.getSigners();
+    const Feed = await ethers.getContractFactory("MockV3Aggregator");
+    const feed = await Feed.deploy(8, 2000n * 10n ** 8n);
+    await feed.waitForDeployment();
     const FreelanceEscrow = await ethers.getContractFactory("FreelanceEscrow");
-    const escrow = await FreelanceEscrow.deploy(FEE_BPS, arbitrator.address);
+    const escrow = await FreelanceEscrow.deploy(FEE_BPS, arbitrator.address, await feed.getAddress());
     await escrow.waitForDeployment();
     return { escrow, arbitrator };
   }
