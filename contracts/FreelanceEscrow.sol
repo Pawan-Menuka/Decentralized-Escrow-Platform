@@ -7,6 +7,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AutomationCompatibleInterface} from
     "@chainlink/contracts/src/v0.8/automation/interfaces/AutomationCompatibleInterface.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title FreelanceEscrow
 /// @notice A milestone-based escrow protocol for freelance work. A client creates and
@@ -23,9 +25,12 @@ import {AutomationCompatibleInterface} from
 ///      freelancer's share of a dispute resolution) — never from client refunds.
 ///
 ///      Fund custody, milestone lifecycle, disputes, time-lock release (manual and via
-///      Chainlink Automation), and USD-priced job creation (Chainlink ETH/USD feed) are
-///      all implemented. The remaining blueprint phase adds ERC-20/USDC support (10).
+///      Chainlink Automation), USD-priced job creation (Chainlink ETH/USD feed), and
+///      ERC-20/USDC support (fee-on-transfer/rebasing tokens rejected at creation) are
+///      all implemented.
 contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompatibleInterface {
+    using SafeERC20 for IERC20;
+
     // ---------------------------------------------------------------------
     // Enums
     // ---------------------------------------------------------------------
@@ -81,7 +86,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
         uint16 milestoneCount;
         /// @notice Number of milestones that have reached a terminal state.
         uint16 approvedCount;
-        /// @notice Payment token; `address(0)` means native ETH. ERC-20 enabled Phase 10.
+        /// @notice Payment token; `address(0)` means native ETH, or an ERC-20 address.
         address token;
         /// @notice Arbitrator snapshotted at creation time (does not track the global
         ///         arbitrator if it is later changed via `setArbitrator`).
@@ -196,8 +201,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     error InvalidBps();
     error NothingToWithdraw();
     error EthTransferFailed();
-    /// @dev token != address(0) before Phase 10.
-    error TokenNotSupported();
+    /// @dev ERC-20 createJob: post-transferFrom balance delta != expected amount (rejects
+    ///      fee-on-transfer / rebasing tokens).
+    error TokenAmountMismatch(uint256 expected, uint256 received);
     /// @dev Phase 8.
     error StalePrice();
     /// @dev Phase 8.
@@ -351,25 +357,28 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     // (implemented in Phases 2, 3, 8, 9, 10 exactly per blueprint §5)
     // ---------------------------------------------------------------------
 
-    /// @notice Creates and fully funds a new job in native ETH.
-    /// @dev Fund-on-create: `msg.value` must exactly equal the sum of `amounts`. ERC-20
-    ///      tokens are rejected until Phase 10 (`token` must be `address(0)`). The global
-    ///      arbitrator is snapshotted into the job so later `setArbitrator` calls do not
-    ///      affect it.
+    /// @notice Creates and fully funds a new job in native ETH or an ERC-20 token.
+    /// @dev Fund-on-create. For ETH (`token == address(0)`), `msg.value` must exactly equal
+    ///      the sum of `amounts`. For an ERC-20 `token`, `msg.value` must be zero and the
+    ///      total is pulled via `safeTransferFrom`; the contract's own balance delta is
+    ///      measured before/after the pull and must equal the requested total, which
+    ///      deliberately rejects fee-on-transfer and rebasing tokens (`TokenAmountMismatch`)
+    ///      rather than silently under-funding a job. The global arbitrator is snapshotted
+    ///      into the job so later `setArbitrator` calls do not affect it.
     /// @param freelancer The counterparty who will perform the work; nonzero, not the caller.
-    /// @param token Payment token; must be `address(0)` (native ETH) in this phase.
-    /// @param amounts Per-milestone amounts (wei); 1..MAX_MILESTONES entries, each > 0.
+    /// @param token Payment token; `address(0)` for native ETH, or an ERC-20 address.
+    /// @param amounts Per-milestone amounts (wei/token units); 1..MAX_MILESTONES entries, each > 0.
     /// @param timelock Seconds of client silence after a submission before auto-release.
     /// @return jobId The id assigned to the new job.
     function createJob(address freelancer, address token, uint128[] calldata amounts, uint32 timelock)
         external
         payable
         whenNotPaused
+        nonReentrant
         returns (uint256 jobId)
     {
         if (freelancer == address(0)) revert ZeroAddress();
         if (freelancer == msg.sender) revert SelfDealing();
-        if (token != address(0)) revert TokenNotSupported();
         uint256 n = amounts.length;
         if (n == 0) revert NoMilestones();
         if (n > MAX_MILESTONES) revert TooManyMilestones();
@@ -391,7 +400,15 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
                 ++i;
             }
         }
-        if (msg.value != total) revert ValueMismatch(total, msg.value);
+        if (token == address(0)) {
+            if (msg.value != total) revert ValueMismatch(total, msg.value);
+        } else {
+            if (msg.value != 0) revert ValueMismatch(0, msg.value);
+            uint256 balBefore = IERC20(token).balanceOf(address(this));
+            IERC20(token).safeTransferFrom(msg.sender, address(this), total);
+            uint256 received = IERC20(token).balanceOf(address(this)) - balBefore;
+            if (received != total) revert TokenAmountMismatch(total, received);
+        }
 
         Job storage job = jobs[jobId];
         job.client = msg.sender;
@@ -409,7 +426,11 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
 
     /// @notice Creates and fully funds a job whose milestones are quoted in USD, converting
     ///         each to ETH at the current Chainlink ETH/USD price. Native ETH only.
-    /// @dev `usdAmounts` carry 8 decimals to match the feed (e.g. $500.00 = `500_00000000`).
+    /// @dev Intentionally ETH-only, even after Phase 10 adds ERC-20 support: a USD-quoted
+    ///      job funded directly in USDC needs no oracle at all (1 USD == 1 USDC by
+    ///      definition) — callers wanting that just call `createJob` with the USDC address
+    ///      and pre-converted amounts, so no `createJobUsdc` variant is needed.
+    ///      `usdAmounts` carry 8 decimals to match the feed (e.g. $500.00 = `500_00000000`).
     ///      The price is read once at funding; the job is thereafter a normal ETH job.
     ///      `msg.value` must exactly equal the converted ETH total — the frontend quotes via
     ///      the same feed immediately before sending. Reverts on a stale or non-positive
@@ -761,8 +782,6 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     /// @dev Follows Checks-Effects-Interactions: the balance is zeroed BEFORE the
     ///      transfer, and the function is `nonReentrant`. Intentionally NOT
     ///      `whenNotPaused` — credited funds must always be exitable, even while paused.
-    ///      ERC-20 withdrawals are enabled in Phase 10; until then only ETH balances can
-    ///      exist (createJob rejects non-ETH tokens).
     /// @param token The token to withdraw; `address(0)` for native ETH.
     function withdraw(address token) external nonReentrant {
         uint256 amount = pendingWithdrawals[token][msg.sender];
@@ -773,7 +792,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
             (bool ok,) = msg.sender.call{value: amount}("");
             if (!ok) revert EthTransferFailed();
         } else {
-            revert TokenNotSupported(); // ERC-20 path implemented in Phase 10
+            IERC20(token).safeTransfer(msg.sender, amount);
         }
 
         emit Withdrawal(msg.sender, token, amount);
@@ -802,7 +821,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     }
 
     /// @notice Owner withdraws accrued protocol fees for a given token to an address.
-    /// @dev Zero-then-send (CEI) + `nonReentrant`. ERC-20 fee withdrawal enabled Phase 10.
+    /// @dev Zero-then-send (CEI) + `nonReentrant`.
     /// @param token The token whose accrued fees to withdraw; `address(0)` for ETH.
     /// @param to Recipient of the fees; must be nonzero.
     function withdrawFees(address token, address to) external onlyOwner nonReentrant {
@@ -815,7 +834,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
             (bool ok,) = to.call{value: amount}("");
             if (!ok) revert EthTransferFailed();
         } else {
-            revert TokenNotSupported(); // ERC-20 path implemented in Phase 10
+            IERC20(token).safeTransfer(to, amount);
         }
 
         emit FeesWithdrawn(token, amount);

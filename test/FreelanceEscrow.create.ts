@@ -64,11 +64,13 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     ).to.be.revertedWithCustomError(escrow, "SelfDealing");
   });
 
-  it("reverts on a non-ETH token (Phase 10 lifts this)", async function () {
+  it("reverts on an ERC-20 job funded with nonzero msg.value (Phase 10 guard)", async function () {
+    // ERC-20 lifecycle itself is covered in FreelanceEscrow.erc20.ts; this test only
+    // asserts the ETH-vs-token guard ordering (msg.value must be 0 for a token job).
     const { escrow, client, freelancer, other } = await loadFixture(deployFixture);
     await expect(
       escrow.connect(client).createJob(freelancer.address, other.address, [A], DEFAULT_TIMELOCK, { value: A }),
-    ).to.be.revertedWithCustomError(escrow, "TokenNotSupported");
+    ).to.be.revertedWithCustomError(escrow, "ValueMismatch").withArgs(0n, A);
   });
 
   it("reverts on zero milestones", async function () {
