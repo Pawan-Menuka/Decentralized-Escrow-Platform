@@ -374,6 +374,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
         external
         payable
         whenNotPaused
+        nonReentrant
         returns (uint256 jobId)
     {
         if (freelancer == address(0)) revert ZeroAddress();
