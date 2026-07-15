@@ -651,7 +651,7 @@ Verify: `forge test -vv`; `slither . --fail-medium`; `npx hardhat test` still gr
 ---
 
 ### Phase 6 — Deploy + verify on Sepolia
-**Status: NOT STARTED**
+**Status: DONE** (done after Phases 8–10 since deploy was deferred; run on 2026-07-15). `scripts/deploy.ts` deploys `FreelanceEscrow(feeBps=100, arbitrator=deployer, ethUsdFeed=Sepolia ETH/USD)`, auto-deploys a `MockV3Aggregator` on local networks, and writes `deployments/<network>.json`. **Deployed to Sepolia at `0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981`** (tx `0xdf4d0e5f…`, block 11277121), **verified on Etherscan** (source public at `/address/0x8979…F981#code`). Live sanity check passed (createJob→cancelJob→withdraw cycle, refund reclaimed). `hardhat.config.ts` normalizes the deployer key (accepts it with or without the `0x` prefix — MetaMask exports without). `deployments/sepolia.json` committed (public data only; `.gitignore` excludes `deployments/hardhat.json`/`localhost.json`). **[HUMAN] done:** Alchemy RPC, Etherscan key, funded dev wallet `0xF176B879…4e589`. **This deployment supersedes any prior address for Tiers 3–4** and is what the subgraph (Phase 13) + frontend (Phase 14) must point at; the Chainlink upkeep registration (Phase 9 follow-up) and USDC sanity (Phase 10 follow-up) can now be done against it.
 
 Tasks:
 1. `scripts/deploy.ts`: deploys with `FEE_BPS` and `ARBITRATOR_ADDRESS` (default deployer) from env; prints address + constructor args; writes `deployments/sepolia.json` (address, block number, args, timestamp) — the subgraph and frontend read this file later.
