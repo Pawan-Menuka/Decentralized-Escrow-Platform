@@ -1,0 +1,14 @@
+{
+  "network": "sepolia",
+  "address": "0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981",
+  "constructorArgs": {
+    "feeBps": 100,
+    "arbitrator": "0xF176B879e2D37ba20A8ba8e219D0FbB44Ce4e589",
+    "ethUsdFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306"
+  },
+  "deployer": "0xF176B879e2D37ba20A8ba8e219D0FbB44Ce4e589",
+  "txHash": "0xdf4d0e5f6d76de5e1eab300fc7709c5fdb0ada3ed31bdac0a2a71ce56f4af9b0",
+  "blockNumber": 11277121,
+  "mockFeed": null,
+  "timestamp": "2026-07-15T10:09:51.983Z"
+}

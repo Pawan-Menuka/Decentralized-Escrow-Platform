@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml)
 
+**Live on Sepolia** — verified contract: [`0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981`](https://sepolia.etherscan.io/address/0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981#code) (ETH/USD price feed: Chainlink `0x694AA1769357215DE4FAC081bf1f309aDC325306`).
+
 A milestone-based escrow protocol for freelance work on Ethereum (Sepolia testnet). A client creates and funds a job split into milestones; a freelancer accepts the job and submits work per milestone; the client approves (releasing funds) or disputes; a trusted arbitrator resolves disputes with an arbitrary split; and if the client goes silent after a submission, funds auto-release to the freelancer once a time-lock expires. All fund movement uses the pull-payment pattern, and the protocol skims a small, capped basis-point fee on every release to the freelancer.
 
 This repository is being built in tiers — an immutable, security-first Solidity contract first (Tier 1), then Chainlink oracle/automation integration (Tier 2), then off-chain IPFS storage and a subgraph (Tier 3), then a full wagmi/RainbowKit frontend (Tier 4). See the roadmap below for what's shipped so far.

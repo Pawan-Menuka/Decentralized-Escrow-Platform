@@ -32,3 +32,7 @@ frontend/node_modules/
 
 # Foundry vendored libs (installed in CI)
 lib/
+
+# Local deploy artifacts (keep only real-network records like sepolia.json)
+deployments/hardhat.json
+deployments/localhost.json
