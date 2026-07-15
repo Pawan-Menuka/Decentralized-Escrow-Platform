@@ -1,0 +1,15 @@
+{
+  "name": "freelance-escrow-subgraph",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The Graph subgraph indexing FreelanceEscrow events on Sepolia.",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "deploy": "graph deploy <SUBGRAPH_SLUG>"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "latest",
+    "@graphprotocol/graph-ts": "latest"
+  }
+}
