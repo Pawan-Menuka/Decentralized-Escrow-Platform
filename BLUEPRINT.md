@@ -726,7 +726,7 @@ Verify: `npx hardhat test`; `npx hardhat coverage` still ≥90%; `forge test` (e
 ### ═══ TIER 3 — Advanced off-chain ═══
 
 ### Phase 11 — IPFS via Pinata
-**Status: NOT STARTED**
+**Status: DONE** — `scripts/lib/ipfs.ts` (pinJson/pinFile/cidUrl) and `scripts/pin-test.ts` built and typechecked (native fetch/FormData/Blob, no new deps). `PINATA_JWT` added to `.env.example`; README has an IPFS subsection. Remaining **[HUMAN]** follow-ups: run a LIVE pin with a real Pinata JWT, and submit a real CID via `submitMilestone` on Sepolia (needs the JWT plus a second/freelancer account).
 
 Tasks:
 1. No contract change (the `deliverableCid`/`evidenceCid` string fields were designed for this).
