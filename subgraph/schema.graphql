@@ -1,0 +1,61 @@
+type Job @entity(immutable: false) {
+  id: ID! # jobId as string
+  jobId: BigInt!
+  client: Bytes!
+  freelancer: Bytes!
+  token: Bytes!
+  totalAmount: BigInt!
+  milestoneCount: BigInt!
+  timelock: BigInt!
+  state: String!
+  createdAt: BigInt!
+  usdTotal: BigInt
+  ethUsdPrice: BigInt
+  completedAt: BigInt
+  milestones: [Milestone!]! @derivedFrom(field: "job")
+  activities: [Activity!]! @derivedFrom(field: "job")
+}
+
+type Milestone @entity(immutable: false) {
+  id: ID! # `<jobId>-<index>`
+  job: Job!
+  index: BigInt!
+  amount: BigInt!
+  state: String!
+  deliverableCid: String
+  submittedAt: BigInt
+  fee: BigInt
+  resolvedFreelancerBps: Int
+}
+
+type Activity @entity(immutable: false) {
+  id: ID! # `<txHash>-<logIndex>`
+  job: Job
+  type: String!
+  milestoneIndex: BigInt
+  actor: Bytes
+  timestamp: BigInt!
+  txHash: Bytes!
+  data: String
+}
+
+type Withdrawal @entity(immutable: false) {
+  id: ID! # `<txHash>-<logIndex>`
+  account: Bytes!
+  token: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+}
+
+type Dispute @entity(immutable: false) {
+  id: ID! # `<jobId>-<mIndex>`
+  job: Job!
+  milestoneIndex: BigInt!
+  raisedBy: Bytes!
+  evidenceCid: String
+  resolved: Boolean!
+  freelancerBps: Int
+  freelancerAmount: BigInt
+  clientAmount: BigInt
+  timestamp: BigInt!
+}

@@ -85,6 +85,50 @@ Milestone deliverables and dispute evidence are pinned off-chain to IPFS via [Pi
 
 `scripts/lib/ipfs.ts` is a small Node helper (native `fetch`/`FormData`/`Blob`, no extra dependencies) exposing `pinJson`, `pinFile`, and `cidUrl`. `scripts/pin-test.ts` is a manual smoke test — run it with `npx hardhat run scripts/pin-test.ts` after setting `PINATA_JWT` in `.env` (a free Pinata account is enough) to pin a sample deliverable and print its CID + gateway URL.
 
+## Subgraph (Phase 13)
+
+`subgraph/` is a hand-written [The Graph](https://thegraph.com) subgraph, with its own `package.json`/`node_modules` isolated from the Hardhat toolchain, that indexes every event of the deployed `FreelanceEscrow` contract (`0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981` on Sepolia, from block `11277121`) into queryable entities:
+
+- **Job** — client, freelancer, token, total amount, milestone count, timelock, lifecycle `state` (`FUNDED`/`IN_PROGRESS`/`COMPLETED`/`DISPUTED`/`CANCELLED`), USD-job fields.
+- **Milestone** — per-job amount, `state` (`PENDING`/`SUBMITTED`/`APPROVED`/`DISPUTED`/`RESOLVED`/`AUTO_RELEASED`), deliverable CID, submission timestamp, fee. Amounts aren't carried in `JobCreated`, so the `handleJobCreated` mapping binds to the contract and calls `getMilestones(jobId)` to read them at index time.
+- **Activity** — one row per state-changing event (job- or protocol-scoped), powering a frontend timeline.
+- **Withdrawal**, **Dispute** — dedicated entities for the pull-payment and arbitration flows.
+
+Build locally (from `subgraph/`):
+
+```bash
+cd subgraph
+npm install --legacy-peer-deps
+npm run codegen   # generates AssemblyScript bindings from the ABI + schema
+npm run build      # compiles the mappings to WASM; the real correctness check
+```
+
+Deploy to Subgraph Studio (**[HUMAN]**, needs a Studio account + deploy key):
+
+```bash
+graph auth                       # paste your Subgraph Studio deploy key
+npm run deploy                   # edit the `<SUBGRAPH_SLUG>` placeholder in package.json first
+```
+
+Sample query once synced:
+
+```graphql
+{
+  jobs(first: 5, orderBy: createdAt, orderDirection: desc) {
+    id
+    state
+    client
+    freelancer
+    totalAmount
+    milestones {
+      index
+      state
+      amount
+    }
+  }
+}
+```
+
 ## Status
 
 This project is under active build-out. See `BLUEPRINT.md` at the repo root for the full, phase-by-phase implementation plan and live status.
