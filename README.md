@@ -79,6 +79,12 @@ See [`SECURITY.md`](SECURITY.md) for the full threat model — reentrancy (pull-
 
 Static analysis (Slither, `crytic/slither-action`) runs in CI configured to fail on medium-or-higher findings; target is zero high/medium.
 
+## IPFS (Phase 11)
+
+Milestone deliverables and dispute evidence are pinned off-chain to IPFS via [Pinata](https://pinata.cloud); only the resulting CID is stored on-chain, in the contract's `deliverableCid`/`evidenceCid` string fields — keeping storage cheap while the content itself stays retrievable and content-addressed.
+
+`scripts/lib/ipfs.ts` is a small Node helper (native `fetch`/`FormData`/`Blob`, no extra dependencies) exposing `pinJson`, `pinFile`, and `cidUrl`. `scripts/pin-test.ts` is a manual smoke test — run it with `npx hardhat run scripts/pin-test.ts` after setting `PINATA_JWT` in `.env` (a free Pinata account is enough) to pin a sample deliverable and print its CID + gateway URL.
+
 ## Status
 
 This project is under active build-out. See `BLUEPRINT.md` at the repo root for the full, phase-by-phase implementation plan and live status.
