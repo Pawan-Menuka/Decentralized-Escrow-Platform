@@ -155,9 +155,11 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     /// @notice Max milestones released in a single `performUpkeep` (bounds the tx).
     uint256 public constant UPKEEP_BATCH_LIMIT = 10;
 
-    /// @notice Global arbitrator address, snapshotted into each Job at creation time.
-    /// @dev Changing this does not retroactively change who arbitrates existing jobs —
-    ///      see SECURITY.md (written in Phase 5).
+    /// @notice The protocol's DEFAULT arbitrator, used only when a job is created without an
+    ///         explicit one (`_arbitrator == address(0)`). Each job snapshots whichever
+    ///         arbitrator it resolved to at creation.
+    /// @dev Changing this never affects existing jobs (they hold their own snapshot), and
+    ///      never affects jobs that named their own arbitrator — see SECURITY.md.
     address public arbitrator;
 
     /// @notice Chainlink ETH/USD price feed (8 decimals) used by `createJobUsd`.
@@ -190,6 +192,9 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     error ZeroAddress();
     /// @dev client == freelancer.
     error SelfDealing();
+    /// @dev The job's arbitrator would be the client or the freelancer — an arbitrator
+    ///      must be a neutral third party.
+    error InvalidArbitrator();
     error NoMilestones();
     error TooManyMilestones();
     error ZeroMilestoneAmount();
@@ -366,19 +371,23 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     ///      rather than silently under-funding a job. The global arbitrator is snapshotted
     ///      into the job so later `setArbitrator` calls do not affect it.
     /// @param freelancer The counterparty who will perform the work; nonzero, not the caller.
+    /// @param _arbitrator The neutral third party who can resolve disputes on THIS job, and
+    ///        who is snapshotted into it. Pass `address(0)` to use the protocol's current
+    ///        default arbitrator. May not be the client or the freelancer.
     /// @param token Payment token; `address(0)` for native ETH, or an ERC-20 address.
     /// @param amounts Per-milestone amounts (wei/token units); 1..MAX_MILESTONES entries, each > 0.
     /// @param timelock Seconds of client silence after a submission before auto-release.
     /// @return jobId The id assigned to the new job.
-    function createJob(address freelancer, address token, uint128[] calldata amounts, uint32 timelock)
-        external
-        payable
-        whenNotPaused
-        nonReentrant
-        returns (uint256 jobId)
-    {
+    function createJob(
+        address freelancer,
+        address _arbitrator,
+        address token,
+        uint128[] calldata amounts,
+        uint32 timelock
+    ) external payable whenNotPaused nonReentrant returns (uint256 jobId) {
         if (freelancer == address(0)) revert ZeroAddress();
         if (freelancer == msg.sender) revert SelfDealing();
+        address jobArbitrator = _resolveArbitrator(_arbitrator, freelancer);
         uint256 n = amounts.length;
         if (n == 0) revert NoMilestones();
         if (n > MAX_MILESTONES) revert TooManyMilestones();
@@ -418,10 +427,24 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
         job.freelancer = freelancer;
         job.milestoneCount = uint16(n);
         job.token = token;
-        job.arbitrator = arbitrator;
+        job.arbitrator = jobArbitrator;
         job.totalAmount = total;
 
         emit JobCreated(jobId, msg.sender, freelancer, token, total, n, timelock);
+    }
+
+    /// @dev Resolves the arbitrator for a new job: an explicit nonzero `_arbitrator` wins,
+    ///      otherwise the protocol's current default (`arbitrator`) is used. Either way the
+    ///      result must be a neutral party — never the client (`msg.sender`) or the
+    ///      `freelancer` — and never the zero address.
+    /// @param _arbitrator The caller-supplied arbitrator, or `address(0)` to use the default.
+    /// @param freelancer The job's freelancer, for the neutrality check.
+    /// @return The arbitrator to snapshot into the job.
+    function _resolveArbitrator(address _arbitrator, address freelancer) internal view returns (address) {
+        address resolved = _arbitrator == address(0) ? arbitrator : _arbitrator;
+        if (resolved == address(0)) revert ZeroAddress();
+        if (resolved == msg.sender || resolved == freelancer) revert InvalidArbitrator();
+        return resolved;
     }
 
     /// @notice Creates and fully funds a job whose milestones are quoted in USD, converting
@@ -437,17 +460,20 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
     ///      price. Conversion: `wei = usdAmount(8dp) * 1e18 / price(8dp)` (the 8-decimal
     ///      scales cancel, leaving a wei-scaled result).
     /// @param freelancer The counterparty; nonzero, not the caller.
+    /// @param _arbitrator The neutral third party for THIS job; `address(0)` uses the
+    ///        protocol default. May not be the client or the freelancer.
     /// @param usdAmounts Per-milestone USD amounts, 8 decimals; 1..MAX_MILESTONES, each > 0.
     /// @param timelock Seconds of client silence after a submission before auto-release.
     /// @return jobId The id assigned to the new job.
-    function createJobUsd(address freelancer, uint128[] calldata usdAmounts, uint32 timelock)
-        external
-        payable
-        whenNotPaused
-        returns (uint256 jobId)
-    {
+    function createJobUsd(
+        address freelancer,
+        address _arbitrator,
+        uint128[] calldata usdAmounts,
+        uint32 timelock
+    ) external payable whenNotPaused returns (uint256 jobId) {
         if (freelancer == address(0)) revert ZeroAddress();
         if (freelancer == msg.sender) revert SelfDealing();
+        address jobArbitrator = _resolveArbitrator(_arbitrator, freelancer);
         uint256 n = usdAmounts.length;
         if (n == 0) revert NoMilestones();
         if (n > MAX_MILESTONES) revert TooManyMilestones();
@@ -482,7 +508,7 @@ contract FreelanceEscrow is ReentrancyGuard, Pausable, Ownable, AutomationCompat
         job.freelancer = freelancer;
         job.milestoneCount = uint16(n);
         job.token = address(0);
-        job.arbitrator = arbitrator;
+        job.arbitrator = jobArbitrator;
         job.totalAmount = ethTotal;
 
         emit JobCreated(jobId, msg.sender, freelancer, address(0), ethTotal, n, timelock);

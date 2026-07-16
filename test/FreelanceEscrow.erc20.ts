@@ -32,7 +32,7 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
     const tokenAddress = await token.getAddress();
     await token.connect(client).approve(await escrow.getAddress(), total);
     const jobId = (await escrow.jobCounter()) + 1n;
-    await escrow.connect(client).createJob(freelancer.address, tokenAddress, amounts, timelock);
+    await escrow.connect(client).createJob(freelancer.address, ZERO, tokenAddress, amounts, timelock);
     return { jobId, total };
   }
 
@@ -171,7 +171,7 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
 
       const expectedReceived = clientBalance - clientBalance / 100n; // 1% withheld again on transferFrom
       await expect(
-        escrow.connect(client).createJob(freelancer.address, fotAddress, [clientBalance], DEFAULT_TIMELOCK),
+        escrow.connect(client).createJob(freelancer.address, ZERO, fotAddress, [clientBalance], DEFAULT_TIMELOCK),
       )
         .to.be.revertedWithCustomError(escrow, "TokenAmountMismatch")
         .withArgs(clientBalance, expectedReceived);
@@ -186,7 +186,7 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
 
       // ETH job
       const ethJobId = (await escrow.jobCounter()) + 1n;
-      await escrow.connect(client).createJob(freelancer.address, ZERO, [ethAmount], DEFAULT_TIMELOCK, {
+      await escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [ethAmount], DEFAULT_TIMELOCK, {
         value: ethAmount,
       });
 
@@ -228,7 +228,7 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
       await token.mint(client.address, A);
       await token.connect(client).approve(await escrow.getAddress(), A);
       await expect(
-        escrow.connect(client).createJob(freelancer.address, tokenAddress, [A], DEFAULT_TIMELOCK, { value: 1n }),
+        escrow.connect(client).createJob(freelancer.address, ZERO, tokenAddress, [A], DEFAULT_TIMELOCK, { value: 1n }),
       )
         .to.be.revertedWithCustomError(escrow, "ValueMismatch")
         .withArgs(0n, 1n);

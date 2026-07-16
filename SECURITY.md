@@ -15,7 +15,9 @@ This document is the threat model: it enumerates the attack surfaces that were c
 | Arbitrator | Splitting **disputed** milestone funds fairly | Anything on non-disputed jobs; cannot touch a job created before they were set (see snapshot below) |
 | Owner (deployer) | Setting the fee (hard-capped) and pausing in an emergency | Cannot seize escrowed funds, cannot block withdrawals, cannot change the arbitrator of an existing job |
 
-The single-arbitrator model is a deliberate V1 simplification. It is honest about its trust assumption rather than hiding it behind a governance token. Multi-arbitrator / decentralized arbitration (e.g. Kleros) is noted as future work.
+**Arbitration is per-job and chosen by the parties.** The client names an arbitrator when creating the job, and that address is snapshotted into it. The contract enforces that the arbitrator is a neutral third party — it can be neither the client nor the freelancer (`InvalidArbitrator`). A protocol *default* arbitrator exists as a convenience (used only when a job is created with `address(0)`), but no job is ever forced to use it, and the owner can never change the arbitrator of an existing job.
+
+The trust assumption is therefore scoped: a job's arbitrator is trusted **only by the two parties who selected them, and only over that job's disputed milestones**. Multi-arbitrator / decentralized arbitration (e.g. Kleros) remains future work.
 
 ## Attack surfaces & mitigations
 
@@ -37,8 +39,10 @@ A client can repeatedly `rejectMilestone`, forcing the freelancer to resubmit in
 ### Timestamp manipulation
 Time-lock expiry uses `block.timestamp`. Miners/proposers can nudge it by a few seconds; the time-locks operate on the scale of days (`MIN_TIMELOCK = 1 hour`, up to 90 days), so a ±15s tolerance is immaterial. No logic depends on fine-grained timing.
 
-### Arbitrator snapshot
-Each job stores the arbitrator that was global **at creation time**. `setArbitrator` changes only *future* jobs. This prevents the owner from swapping in a colluding arbitrator to steal an in-flight disputed job's funds. Proven by a test where the snapshotted arbitrator retains authority after the global one changes.
+### Arbitrator snapshot & neutrality
+Each job stores the arbitrator resolved **at creation time** — either the one the client explicitly named, or the protocol default if none was given. `setArbitrator` only changes the *default*, and so only affects *future* jobs that opt into it. This prevents the owner from swapping in a colluding arbitrator to steal an in-flight disputed job's funds. Proven by tests where (a) the snapshotted arbitrator retains authority after the global default changes, and (b) an explicitly-named arbitrator can resolve that job's dispute end-to-end.
+
+`_resolveArbitrator` additionally rejects an arbitrator equal to the client or the freelancer (`InvalidArbitrator`), so a job can never be created with a self-dealing "neutral" party.
 
 ### Fee bounds
 `feeBps` is hard-capped at `MAX_FEE_BPS = 500` (5%) in both the constructor and `setFeeBps`; a malicious/compromised owner cannot set a confiscatory fee. The fee is read at release time and applies only to freelancer-bound funds (approval, auto-release, and the freelancer's share of a dispute) — never to client refunds or cancellations.
@@ -69,7 +73,7 @@ Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on ever
 
 ## Known limitations / future work
 
-- Single trusted arbitrator (→ decentralized arbitration).
+- Arbitration rests on a single party-chosen arbitrator per job (→ decentralized/multi-arbitrator arbitration).
 - No cap on client rejections per milestone (→ reject-griefing mitigation).
 - ETH-only until Phase 10 (→ ERC-20/USDC).
 - Testnet only; unaudited.

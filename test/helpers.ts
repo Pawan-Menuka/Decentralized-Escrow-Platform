@@ -45,17 +45,24 @@ export async function deployFixture(): Promise<Deployed> {
   return { escrow, feed, owner, client, freelancer, arbitrator, other };
 }
 
-/** Creates and funds a job (ETH). Returns the jobId and the total funded. */
+/**
+ * Creates and funds a job (ETH). Returns the jobId and the total funded.
+ * `arbitrator` defaults to ZERO, which makes the contract fall back to its default
+ * (global) arbitrator — matching the pre-per-job-arbitrator behaviour.
+ */
 export async function createFundedJob(
   escrow: FreelanceEscrow,
   client: HardhatEthersSigner,
   freelancer: HardhatEthersSigner,
   amounts: bigint[],
   timelock: number = DEFAULT_TIMELOCK,
+  arbitrator: string = ZERO,
 ): Promise<{ jobId: bigint; total: bigint }> {
   const total = amounts.reduce((a, b) => a + b, 0n);
   const jobId = (await escrow.jobCounter()) + 1n;
-  await escrow.connect(client).createJob(freelancer.address, ZERO, amounts, timelock, { value: total });
+  await escrow
+    .connect(client)
+    .createJob(freelancer.address, arbitrator, ZERO, amounts, timelock, { value: total });
   return { jobId, total };
 }
 
