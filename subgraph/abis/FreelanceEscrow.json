@@ -37,6 +37,11 @@
   },
   {
     "inputs": [],
+    "name": "InvalidArbitrator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InvalidBps",
     "type": "error"
   },
@@ -894,6 +899,11 @@
       },
       {
         "internalType": "address",
+        "name": "_arbitrator",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
         "name": "token",
         "type": "address"
       },
@@ -924,6 +934,11 @@
       {
         "internalType": "address",
         "name": "freelancer",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_arbitrator",
         "type": "address"
       },
       {
