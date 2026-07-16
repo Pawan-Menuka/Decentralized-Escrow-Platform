@@ -22,7 +22,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       expect(expectedWei).to.equal(ethers.parseEther("0.25"));
 
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: expectedWei }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: expectedWei }),
       )
         .to.emit(escrow, "JobCreated")
         .withArgs(1n, client.address, freelancer.address, ZERO, expectedWei, 1n, DEFAULT_TIMELOCK)
@@ -42,7 +42,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       expect(total).to.equal(ethers.parseEther("0.625"));
 
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, amounts, DEFAULT_TIMELOCK, { value: total }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, amounts, DEFAULT_TIMELOCK, { value: total }),
       ).to.changeEtherBalances([client, escrow], [-total, total]);
     });
 
@@ -54,7 +54,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       const expectedWei = usdToWei(usdAmt, newPrice); // 0.2 ETH
       expect(expectedWei).to.equal(ethers.parseEther("0.2"));
 
-      await escrow.connect(client).createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: expectedWei });
+      await escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: expectedWei });
       expect((await escrow.getMilestone(1n, 0n)).amount).to.equal(expectedWei);
     });
 
@@ -63,7 +63,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       const usdAmt = usd(500);
       const correct = usdToWei(usdAmt);
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: correct - 1n }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: correct - 1n }),
       )
         .to.be.revertedWithCustomError(escrow, "ValueMismatch")
         .withArgs(correct, correct - 1n);
@@ -79,7 +79,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       await expect(
         escrow
           .connect(client)
-          .createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: usdToWei(usdAmt) }),
+          .createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: usdToWei(usdAmt) }),
       ).to.be.revertedWithCustomError(escrow, "StalePrice");
     });
 
@@ -91,7 +91,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       await expect(
         escrow
           .connect(client)
-          .createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: usdToWei(usdAmt) }),
+          .createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: usdToWei(usdAmt) }),
       ).to.emit(escrow, "JobCreated");
     });
 
@@ -99,7 +99,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       const { escrow, feed, client, freelancer } = await loadFixture(deployFixture);
       await feed.updateAnswer(0);
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [usd(500)], DEFAULT_TIMELOCK, { value: 1n }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usd(500)], DEFAULT_TIMELOCK, { value: 1n }),
       ).to.be.revertedWithCustomError(escrow, "InvalidPrice");
     });
 
@@ -107,7 +107,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       const { escrow, feed, client, freelancer } = await loadFixture(deployFixture);
       await feed.updateAnswer(-1);
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [usd(500)], DEFAULT_TIMELOCK, { value: 1n }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usd(500)], DEFAULT_TIMELOCK, { value: 1n }),
       ).to.be.revertedWithCustomError(escrow, "InvalidPrice");
     });
   });
@@ -116,21 +116,21 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
     it("reverts on self-dealing", async function () {
       const { escrow, client } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(client).createJobUsd(client.address, [usd(500)], DEFAULT_TIMELOCK, { value: usdToWei(usd(500)) }),
+        escrow.connect(client).createJobUsd(client.address, ZERO, [usd(500)], DEFAULT_TIMELOCK, { value: usdToWei(usd(500)) }),
       ).to.be.revertedWithCustomError(escrow, "SelfDealing");
     });
 
     it("reverts on zero milestones", async function () {
       const { escrow, client, freelancer } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [], DEFAULT_TIMELOCK, { value: 0 }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [], DEFAULT_TIMELOCK, { value: 0 }),
       ).to.be.revertedWithCustomError(escrow, "NoMilestones");
     });
 
     it("reverts on out-of-range timelock", async function () {
       const { escrow, client, freelancer } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(client).createJobUsd(freelancer.address, [usd(500)], 60, { value: usdToWei(usd(500)) }),
+        escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usd(500)], 60, { value: usdToWei(usd(500)) }),
       ).to.be.revertedWithCustomError(escrow, "TimelockOutOfRange");
     });
 
@@ -140,7 +140,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       await expect(
         escrow
           .connect(client)
-          .createJobUsd(freelancer.address, [usd(500)], DEFAULT_TIMELOCK, { value: usdToWei(usd(500)) }),
+          .createJobUsd(freelancer.address, ZERO, [usd(500)], DEFAULT_TIMELOCK, { value: usdToWei(usd(500)) }),
       ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
   });
@@ -150,7 +150,7 @@ describe("FreelanceEscrow — createJobUsd / price feed (Phase 8)", function () 
       const { escrow, client, freelancer } = await loadFixture(deployFixture);
       const usdAmt = usd(1000);
       const wei = usdToWei(usdAmt); // 0.5 ETH
-      await escrow.connect(client).createJobUsd(freelancer.address, [usdAmt], DEFAULT_TIMELOCK, { value: wei });
+      await escrow.connect(client).createJobUsd(freelancer.address, ZERO, [usdAmt], DEFAULT_TIMELOCK, { value: wei });
 
       await escrow.connect(freelancer).acceptJob(1n);
       await escrow.connect(freelancer).submitMilestone(1n, 0n, "cid");
