@@ -263,7 +263,7 @@ Design these — they're where dapps usually feel unfinished:
 
 | Thing | Value |
 |---|---|
-| **Escrow contract (Sepolia)** | `0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981` ([verified](https://sepolia.etherscan.io/address/0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981#code)) |
+| **Escrow contract (Sepolia)** | `0x85DBE339432cd7960FADFef78e2E6981025bD4BA` ([verified](https://sepolia.etherscan.io/address/0x85DBE339432cd7960FADFef78e2E6981025bD4BA#code)) |
 | Chainlink ETH/USD feed | `0x694AA1769357215DE4FAC081bf1f309aDC325306` |
 | Circle USDC (Sepolia) | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
 | Chain | Ethereum Sepolia (chainId **11155111**) |

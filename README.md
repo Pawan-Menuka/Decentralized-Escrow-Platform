@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml)
 
-**Live on Sepolia** — verified contract: [`0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981`](https://sepolia.etherscan.io/address/0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981#code) (ETH/USD price feed: Chainlink `0x694AA1769357215DE4FAC081bf1f309aDC325306`).
+**Live on Sepolia** — verified contract: [`0x85DBE339432cd7960FADFef78e2E6981025bD4BA`](https://sepolia.etherscan.io/address/0x85DBE339432cd7960FADFef78e2E6981025bD4BA#code) (ETH/USD price feed: Chainlink `0x694AA1769357215DE4FAC081bf1f309aDC325306`).
 
 A milestone-based escrow protocol for freelance work on Ethereum (Sepolia testnet). A client creates and funds a job split into milestones; a freelancer accepts the job and submits work per milestone; the client approves (releasing funds) or disputes; a trusted arbitrator resolves disputes with an arbitrary split; and if the client goes silent after a submission, funds auto-release to the freelancer once a time-lock expires. All fund movement uses the pull-payment pattern, and the protocol skims a small, capped basis-point fee on every release to the freelancer.
 
@@ -45,9 +45,9 @@ Total infrastructure cost target: **$0** (Sepolia faucets and free tiers through
 
 ## Testing
 
-`FreelanceEscrow.sol` has **137 passing Hardhat tests** across unit, integration, ERC-20, and attack suites (`test/*.ts`), plus dedicated mocks in `contracts/mocks/` (`MaliciousReceiver`, `RevertingReceiver`, `MockERC20`, `FeeOnTransferERC20`) and a Chainlink `MockV3Aggregator` for price-feed tests.
+`FreelanceEscrow.sol` has **143 passing Hardhat tests** across unit, integration, ERC-20, and attack suites (`test/*.ts`), plus dedicated mocks in `contracts/mocks/` (`MaliciousReceiver`, `RevertingReceiver`, `MockERC20`, `FeeOnTransferERC20`) and a Chainlink `MockV3Aggregator` for price-feed tests.
 
-- `npx hardhat test` — 137 passing (happy paths, full wrong-caller/wrong-state guard matrix, fee accounting to the wei, integration lifecycles, reentrancy + pull-payment-DoS attack tests, USD price-feed conversion incl. staleness/invalid-price handling, Chainlink Automation check/perform upkeep incl. batching + forged-data re-validation, and a full ERC-20/USDC lifecycle).
+- `npx hardhat test` — 143 passing (happy paths, full wrong-caller/wrong-state guard matrix, fee accounting to the wei, integration lifecycles, reentrancy + pull-payment-DoS attack tests, USD price-feed conversion incl. staleness/invalid-price handling, Chainlink Automation check/perform upkeep incl. batching + forged-data re-validation, and a full ERC-20/USDC lifecycle).
 - `npx hardhat coverage` (`.solcover.js` skips `contracts/mocks`) — **98.95% statements, 93.69% branches, 100% functions, 100% lines** on `FreelanceEscrow.sol`.
 - **ERC-20/USDC support (Phase 10):** `createJob` accepts either native ETH (`token == address(0)`) or any ERC-20 token, pulling the total via `SafeERC20.safeTransferFrom` and crediting/withdrawing per-token throughout (`pendingWithdrawals`/`accruedFees` are already keyed by token). Fee-on-transfer and rebasing tokens are explicitly rejected: `createJob` measures the escrow's own balance delta around the transfer and reverts `TokenAmountMismatch` if it falls short of the requested total, rather than silently under-funding a job. `test/FreelanceEscrow.erc20.ts` covers the full lifecycle (create/accept/submit/approve/withdraw, dispute split, cancel refund) in a `MockERC20`, the `FeeOnTransferERC20` rejection, and an ETH-job + token-job coexisting in the same contract with independent balances/fees.
 - Attack tests prove: (1) a malicious freelancer contract that re-enters `withdraw()` from its own `receive()` gains nothing beyond its credited balance — the whole transaction reverts (`EthTransferFailed`), since `nonReentrant` + the zero-before-transfer (CEI) pattern block the reentrant call; (2) **the pull-payment thesis** — a freelancer contract that unconditionally reverts on receiving ETH can NEVER brick the client's `approveMilestone` (no external call is made there), only its own subsequent `withdraw()` fails, isolating the damage to the bad actor.
@@ -87,7 +87,7 @@ Milestone deliverables and dispute evidence are pinned off-chain to IPFS via [Pi
 
 ## Subgraph (Phase 13)
 
-`subgraph/` is a hand-written [The Graph](https://thegraph.com) subgraph, with its own `package.json`/`node_modules` isolated from the Hardhat toolchain, that indexes every event of the deployed `FreelanceEscrow` contract (`0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981` on Sepolia, from block `11277121`) into queryable entities:
+`subgraph/` is a hand-written [The Graph](https://thegraph.com) subgraph, with its own `package.json`/`node_modules` isolated from the Hardhat toolchain, that indexes every event of the deployed `FreelanceEscrow` contract (`0x85DBE339432cd7960FADFef78e2E6981025bD4BA` on Sepolia, from block `11287638`) into queryable entities:
 
 - **Job** — client, freelancer, token, total amount, milestone count, timelock, lifecycle `state` (`FUNDED`/`IN_PROGRESS`/`COMPLETED`/`DISPUTED`/`CANCELLED`), USD-job fields.
 - **Milestone** — per-job amount, `state` (`PENDING`/`SUBMITTED`/`APPROVED`/`DISPUTED`/`RESOLVED`/`AUTO_RELEASED`), deliverable CID, submission timestamp, fee. Amounts aren't carried in `JobCreated`, so the `handleJobCreated` mapping binds to the contract and calls `getMilestones(jobId)` to read them at index time.

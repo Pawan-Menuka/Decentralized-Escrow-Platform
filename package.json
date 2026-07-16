@@ -4,7 +4,8 @@
   "description": "Milestone-based escrow protocol for freelance work on Ethereum (Sepolia)",
   "main": "index.js",
   "scripts": {
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "sync-abi": "node scripts/sync-abi.cjs"
   },
   "keywords": [],
   "author": "",

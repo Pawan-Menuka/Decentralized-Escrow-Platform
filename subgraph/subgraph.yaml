@@ -8,9 +8,9 @@ dataSources:
     name: FreelanceEscrow
     network: sepolia
     source:
-      address: "0x8979c8a5C96ff221Ea520f45927AACc4Ee50F981"
+      address: "0x85DBE339432cd7960FADFef78e2E6981025bD4BA"
       abi: FreelanceEscrow
-      startBlock: 11277121
+      startBlock: 11287638
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

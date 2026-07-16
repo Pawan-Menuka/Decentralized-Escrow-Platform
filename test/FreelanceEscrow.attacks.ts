@@ -21,7 +21,7 @@ describe("FreelanceEscrow — attack tests & guard-matrix completeness (Phase 4)
 
       const attackerAddr = await attacker.getAddress();
       const jobId = (await escrow.jobCounter()) + 1n;
-      await escrow.connect(client).createJob(attackerAddr, ZERO, [A], DEFAULT_TIMELOCK, { value: A });
+      await escrow.connect(client).createJob(attackerAddr, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A });
       await attacker.doAccept(jobId);
       await attacker.doSubmit(jobId, 0n, "cid");
       await escrow.connect(client).approveMilestone(jobId, 0n);
@@ -61,7 +61,7 @@ describe("FreelanceEscrow — attack tests & guard-matrix completeness (Phase 4)
 
       const attackerAddr = await attacker.getAddress();
       const jobId = (await escrow.jobCounter()) + 1n;
-      await escrow.connect(client).createJob(attackerAddr, ZERO, [A], DEFAULT_TIMELOCK, { value: A });
+      await escrow.connect(client).createJob(attackerAddr, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A });
       await attacker.doAccept(jobId);
       await attacker.doSubmit(jobId, 0n, "cid");
 
@@ -233,7 +233,7 @@ describe("FreelanceEscrow — attack tests & guard-matrix completeness (Phase 4)
       it("reverts when msg.value is UNDER the milestone sum", async function () {
         const { escrow, client, freelancer } = await loadFixture(deployFixture);
         await expect(
-          escrow.connect(client).createJob(freelancer.address, ZERO, [A, B], DEFAULT_TIMELOCK, { value: A }),
+          escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A, B], DEFAULT_TIMELOCK, { value: A }),
         )
           .to.be.revertedWithCustomError(escrow, "ValueMismatch")
           .withArgs(A + B, A);
@@ -243,7 +243,7 @@ describe("FreelanceEscrow — attack tests & guard-matrix completeness (Phase 4)
         const { escrow, client, freelancer } = await loadFixture(deployFixture);
         const overpaid = A + B + 1n;
         await expect(
-          escrow.connect(client).createJob(freelancer.address, ZERO, [A, B], DEFAULT_TIMELOCK, { value: overpaid }),
+          escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A, B], DEFAULT_TIMELOCK, { value: overpaid }),
         )
           .to.be.revertedWithCustomError(escrow, "ValueMismatch")
           .withArgs(A + B, overpaid);

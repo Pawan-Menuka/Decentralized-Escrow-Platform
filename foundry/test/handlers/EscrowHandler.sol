@@ -81,7 +81,7 @@ contract EscrowHandler is Test {
         // (prank only overrides msg.sender), so fund the handler, not the client.
         vm.deal(address(this), total);
         vm.prank(client);
-        try escrow.createJob{value: total}(freelancer, address(0), amounts, 1 days) returns (uint256 jobId) {
+        try escrow.createJob{value: total}(freelancer, address(0), address(0), amounts, 1 days) returns (uint256 jobId) {
             jobIds.push(jobId);
             ghost_totalDeposited += total;
         } catch {}

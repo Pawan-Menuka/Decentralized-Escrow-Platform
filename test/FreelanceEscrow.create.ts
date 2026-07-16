@@ -12,7 +12,7 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     const amounts = [A, B];
     const total = A + B;
 
-    await expect(escrow.connect(client).createJob(freelancer.address, ZERO, amounts, DEFAULT_TIMELOCK, { value: total }))
+    await expect(escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, amounts, DEFAULT_TIMELOCK, { value: total }))
       .to.emit(escrow, "JobCreated")
       .withArgs(1n, client.address, freelancer.address, ZERO, total, 2n, DEFAULT_TIMELOCK);
 
@@ -37,7 +37,7 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     const total = A + B;
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A, B], DEFAULT_TIMELOCK, { value: total }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A, B], DEFAULT_TIMELOCK, { value: total }),
     ).to.changeEtherBalances([client, escrow], [-total, total]);
   });
 
@@ -53,14 +53,14 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
   it("reverts on zero freelancer", async function () {
     const { escrow, client } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(ZERO, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "ZeroAddress");
   });
 
   it("reverts on self-dealing (client == freelancer)", async function () {
     const { escrow, client } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(client.address, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(client.address, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "SelfDealing");
   });
 
@@ -69,14 +69,14 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     // asserts the ETH-vs-token guard ordering (msg.value must be 0 for a token job).
     const { escrow, client, freelancer, other } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(freelancer.address, other.address, [A], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, other.address, [A], DEFAULT_TIMELOCK, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "ValueMismatch").withArgs(0n, A);
   });
 
   it("reverts on zero milestones", async function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [], DEFAULT_TIMELOCK, { value: 0 }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [], DEFAULT_TIMELOCK, { value: 0 }),
     ).to.be.revertedWithCustomError(escrow, "NoMilestones");
   });
 
@@ -84,21 +84,21 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     const amounts = new Array(51).fill(1n) as bigint[];
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, amounts, DEFAULT_TIMELOCK, { value: 51n }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, amounts, DEFAULT_TIMELOCK, { value: 51n }),
     ).to.be.revertedWithCustomError(escrow, "TooManyMilestones");
   });
 
   it("reverts on a zero-amount milestone", async function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A, 0n], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A, 0n], DEFAULT_TIMELOCK, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "ZeroMilestoneAmount");
   });
 
   it("reverts when msg.value != sum(amounts)", async function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A, B], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A, B], DEFAULT_TIMELOCK, { value: A }),
     )
       .to.be.revertedWithCustomError(escrow, "ValueMismatch")
       .withArgs(A + B, A);
@@ -107,10 +107,10 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
   it("reverts on out-of-range timelock (too low and too high)", async function () {
     const { escrow, client, freelancer } = await loadFixture(deployFixture);
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A], 60, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A], 60, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "TimelockOutOfRange");
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A], 91 * 24 * 60 * 60, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A], 91 * 24 * 60 * 60, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "TimelockOutOfRange");
   });
 
@@ -118,7 +118,70 @@ describe("FreelanceEscrow — createJob (Phase 2)", function () {
     const { escrow, owner, client, freelancer } = await loadFixture(deployFixture);
     await escrow.connect(owner).pause();
     await expect(
-      escrow.connect(client).createJob(freelancer.address, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
+      escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A }),
     ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+  });
+
+  describe("per-job arbitrator", function () {
+    it("snapshots an explicit arbitrator into the job, distinct from the global default", async function () {
+      const { escrow, client, freelancer, arbitrator, other } = await loadFixture(deployFixture);
+      await escrow.connect(client).createJob(freelancer.address, other.address, ZERO, [A], DEFAULT_TIMELOCK, {
+        value: A,
+      });
+      const job = await escrow.getJob(1n);
+      expect(job.arbitrator).to.equal(other.address);
+      expect(job.arbitrator).to.not.equal(arbitrator.address);
+      expect(await escrow.arbitrator()).to.equal(arbitrator.address); // global unchanged
+    });
+
+    it("falls back to the protocol default arbitrator when ZERO is passed", async function () {
+      const { escrow, client, freelancer, arbitrator } = await loadFixture(deployFixture);
+      await escrow.connect(client).createJob(freelancer.address, ZERO, ZERO, [A], DEFAULT_TIMELOCK, { value: A });
+      const job = await escrow.getJob(1n);
+      expect(job.arbitrator).to.equal(await escrow.arbitrator());
+      expect(job.arbitrator).to.equal(arbitrator.address);
+    });
+
+    it("reverts InvalidArbitrator when the supplied arbitrator is the client", async function () {
+      const { escrow, client, freelancer } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(client).createJob(freelancer.address, client.address, ZERO, [A], DEFAULT_TIMELOCK, {
+          value: A,
+        }),
+      ).to.be.revertedWithCustomError(escrow, "InvalidArbitrator");
+    });
+
+    it("reverts InvalidArbitrator when the supplied arbitrator is the freelancer", async function () {
+      const { escrow, client, freelancer } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(client).createJob(freelancer.address, freelancer.address, ZERO, [A], DEFAULT_TIMELOCK, {
+          value: A,
+        }),
+      ).to.be.revertedWithCustomError(escrow, "InvalidArbitrator");
+    });
+
+    it("an explicitly-named arbitrator can resolve a dispute on that job", async function () {
+      const { escrow, client, freelancer, other } = await loadFixture(deployFixture);
+      await escrow.connect(client).createJob(freelancer.address, other.address, ZERO, [A], DEFAULT_TIMELOCK, {
+        value: A,
+      });
+      await escrow.connect(freelancer).acceptJob(1n);
+      await escrow.connect(freelancer).submitMilestone(1n, 0n, "cid-0");
+      await escrow.connect(client).raiseDispute(1n, 0n, "ev-0");
+
+      await expect(escrow.connect(other).resolveDispute(1n, 0n, 5000)).to.emit(escrow, "DisputeResolved");
+      expect((await escrow.getJob(1n)).state).to.equal(JS.COMPLETED);
+    });
+
+    it("createJobUsd also honours an explicit arbitrator", async function () {
+      const { escrow, client, freelancer, other } = await loadFixture(deployFixture);
+      const usdAmt = 500_00000000n; // $500.00 at 8 decimals
+      const expectedWei = ethers.parseEther("0.25"); // $500 @ $2000/ETH
+      await escrow.connect(client).createJobUsd(freelancer.address, other.address, [usdAmt], DEFAULT_TIMELOCK, {
+        value: expectedWei,
+      });
+      const job = await escrow.getJob(1n);
+      expect(job.arbitrator).to.equal(other.address);
+    });
   });
 });
