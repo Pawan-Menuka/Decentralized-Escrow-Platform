@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Holdfast — escrow that keeps its word</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #0B0E14; }
+      a { color: #6FB5FF; text-decoration: none; }
+      a:hover { color: #9CCBFF; }
+      @keyframes ledgerdash { to { stroke-dashoffset: -22; } }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+      ::selection { background: #1E4E7E; color: #E8ECF2; }
+      input[type="range"] { accent-color: #39A0FF; }
+      textarea:focus, input:focus, select:focus { outline: 1px solid #39A0FF; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
