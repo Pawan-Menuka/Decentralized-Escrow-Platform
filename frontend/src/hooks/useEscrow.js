@@ -1,5 +1,7 @@
 import { useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
 import { ESCROW_ADDRESS, ESCROW_ABI, ERC20_ABI, USDC_ADDRESS, ETH_TOKEN } from '../config/contract';
+import { hasSubgraph, fetchJobsFor } from '../lib/graph';
 import { STATE } from '../theme';
 
 const escrow = { address: ESCROW_ADDRESS, abi: ESCROW_ABI };
@@ -74,17 +76,37 @@ export function useJobCount() {
   return data ? Number(data) : 0;
 }
 
-// All jobs, filtered client-side to ones involving `address`.
-// TODO: swap for a subgraph / indexer query once job volume grows.
+/**
+ * Jobs involving the connected wallet (as client, freelancer, or arbitrator).
+ *
+ * Reads from the subgraph when `VITE_SUBGRAPH_URL` is set — one indexed query instead
+ * of `jobCounter` + a multicall over every job, which is what makes this scale. With
+ * no subgraph configured (or if a query fails) it falls back to reading the chain
+ * directly, so the app still works against a fresh deployment before the subgraph has
+ * synced. Both paths return the identical job shape.
+ */
 export function useMyJobs() {
   const { address } = useAccount();
+  const useGraph = hasSubgraph();
+
+  // --- Subgraph path ---
+  const { data: graphJobs, error: graphError } = useQuery({
+    queryKey: ['myJobs', address],
+    queryFn: () => fetchJobsFor(address),
+    enabled: useGraph && !!address,
+    refetchInterval: 12_000,
+    retry: 1,
+  });
+
+  // --- RPC fallback path (also covers a subgraph query that errored) ---
+  const rpcEnabled = !!address && (!useGraph || !!graphError);
   const count = useJobCount();
   const ids = Array.from({ length: count }, (_, i) => i + 1); // ids start at 1
   const { data } = useReadContracts({
     contracts: ids.map((id) => ({ ...escrow, functionName: 'getJob', args: [BigInt(id)] })),
-    query: { enabled: count > 0 },
+    query: { enabled: rpcEnabled && count > 0 },
   });
-  const mine = (data || [])
+  const rpcJobs = (data || [])
     .map((r, i) => {
       const job = adaptJob(r.result);
       return job ? { id: ids[i], ...job } : null;
@@ -95,7 +117,9 @@ export function useMyJobs() {
         address &&
         [j.client, j.freelancer, j.arbitrator].map((a) => a?.toLowerCase()).includes(address.toLowerCase()),
     );
-  return { jobs: mine, connected: !!address };
+
+  const jobs = useGraph && !graphError ? graphJobs ?? [] : rpcJobs;
+  return { jobs, connected: !!address, source: useGraph && !graphError ? 'subgraph' : 'rpc' };
 }
 
 /**

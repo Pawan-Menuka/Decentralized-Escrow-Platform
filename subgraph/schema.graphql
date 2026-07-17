@@ -3,6 +3,9 @@ type Job @entity(immutable: false) {
   jobId: BigInt!
   client: Bytes!
   freelancer: Bytes!
+  # Not carried in JobCreated — read from the contract in handleJobCreated. Needed so
+  # the arbitrator desk can find jobs by arbitrator without falling back to RPC.
+  arbitrator: Bytes!
   token: Bytes!
   totalAmount: BigInt!
   milestoneCount: BigInt!

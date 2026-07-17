@@ -34,6 +34,7 @@ function loadJob(jobId: BigInt): Job {
     job.jobId = jobId;
     job.client = Bytes.empty();
     job.freelancer = Bytes.empty();
+    job.arbitrator = Bytes.empty();
     job.token = Bytes.empty();
     job.totalAmount = BigInt.zero();
     job.milestoneCount = BigInt.zero();
@@ -55,11 +56,17 @@ export function handleJobCreated(event: JobCreated): void {
   job.timelock = event.params.timelock;
   job.state = "FUNDED";
   job.createdAt = event.block.timestamp;
+
+  let contract = FreelanceEscrowContract.bind(event.address);
+
+  // The per-job arbitrator isn't in JobCreated — read the snapshot off the contract
+  // so the arbitrator desk can query by it.
+  let jobResult = contract.try_getJob(jobId);
+  job.arbitrator = jobResult.reverted ? Bytes.empty() : jobResult.value.arbitrator;
   job.save();
 
-  // Milestone amounts are not carried in the event — bind to the contract and
-  // pull each milestone's amount via the generated view-function bindings.
-  let contract = FreelanceEscrowContract.bind(event.address);
+  // Milestone amounts are not carried in the event either — pull each milestone's
+  // amount via the generated view-function bindings.
   let count = event.params.milestoneCount.toI32();
   let milestonesResult = contract.try_getMilestones(jobId);
   if (!milestonesResult.reverted) {
