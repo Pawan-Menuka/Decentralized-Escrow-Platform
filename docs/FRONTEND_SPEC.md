@@ -102,9 +102,11 @@ In a dapp, "endpoints" are of four kinds: **contract writes** (transactions), **
 
 | Action (button/form) | Function | Who (role) | When (state) | Inputs the UI collects |
 |---|---|---|---|---|
-| Create job (ETH) | `createJob(freelancer, 0x0, amounts[], timelock)` **payable** | Client | new | freelancer address, milestone amounts (ETH), timelock; send `value = Σ amounts` |
-| Create job (USDC) | `approve(escrow, total)` on the token, **then** `createJob(freelancer, USDC, amounts[], timelock)` | Client | new | same, in USDC; **two-step** — check allowance, approve if needed, then create (`value = 0`) |
-| Create job (USD-priced) | `createJobUsd(freelancer, usdAmounts[], timelock)` **payable** | Client | new | USD amounts (8-dec); UI quotes ETH from the feed and sends `value = quoted ETH` |
+| Create job (ETH) | `createJob(freelancer, arbitrator, 0x0, amounts[], timelock)` **payable** | Client | new | freelancer address, **arbitrator address**, milestone amounts (ETH), timelock; send `value = Σ amounts` |
+| Create job (USDC) | `approve(escrow, total)` on the token, **then** `createJob(freelancer, arbitrator, USDC, amounts[], timelock)` | Client | new | same, in USDC; **two-step** — check allowance, approve if needed, then create (`value = 0`) |
+| Create job (USD-priced) | `createJobUsd(freelancer, arbitrator, usdAmounts[], timelock)` **payable** | Client | new | USD amounts (8-dec); UI quotes ETH from the feed and sends `value = quoted ETH` |
+
+> **Arbitrator:** the client names the job's neutral arbitrator at creation and it is snapshotted into the job. Pass `address(0)` to fall back to the protocol's default arbitrator. The contract rejects an arbitrator equal to the client or the freelancer (`InvalidArbitrator`).
 | Accept job | `acceptJob(jobId)` | Freelancer | FUNDED | — |
 | Submit milestone | `submitMilestone(jobId, mIndex, cid)` | Freelancer | job IN_PROGRESS, milestone PENDING | file upload → IPFS CID |
 | Approve milestone | `approveMilestone(jobId, mIndex)` | Client | milestone SUBMITTED | — |
