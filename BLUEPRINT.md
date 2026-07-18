@@ -776,7 +776,7 @@ Verify: curl/fetch the query URL.
 ### ═══ TIER 4 — Frontend (contract is LOCKED from here — any ABI change means redoing 13+) ═══
 
 ### Phase 14 — Frontend scaffold + wallet
-**Status: NOT STARTED**
+**Status: DONE** — **delivered together with Phases 15 & 16 via a `/ui-drop` integration**, not built from this plan's steps. The human hand-designed the whole app ("Holdfast": Vite + React 18 + wagmi v2 + viem v2 + RainbowKit v2 + TanStack Query + react-router, **JSX not TS** — the design's choice supersedes this plan's TypeScript note) and it was integrated **verbatim, visuals untouched**, into `frontend/`. Scaffold, providers, routing, `ConnectButton`, and the Sepolia network gate all came from the design (`src/main.jsx`, `src/components/Shell.jsx`, `src/config/wagmi.js`). The real ABI lives in `frontend/src/config/FreelanceEscrow.abi.json`, kept in sync with the subgraph's copy by the root `npm run sync-abi` (`scripts/sync-abi.cjs`). `.claude/launch.json` runs the dev server (`npm --prefix frontend run dev`, port 5173). **All contract⇄UI differences are absorbed in `frontend/src/hooks/useEscrow.js`** — the seam the design provided (pages never call the contract): `jobCounter` (not `nextJobId`), **1-based job ids**, `Job.state` enum → `accepted`/`cancelled`/`total`, `deliverableCid` → `cid`, per-token `pendingWithdrawals(token, who)`/`withdraw(token)` with auto-token selection, and cancelled jobs surfacing their milestones as `CANCELLED`. `theme.js`'s `STATE` was realigned to `MilestoneState` (**index 0 is a `NONE` sentinel** — without this every milestone rendered one state too far along; safe because `StateRail`/`MoneyBar` key off state *names*, not that array). Verified: `npm run build` passes and a live Sepolia job renders real data through the design. **CI now has a `frontend` job** that runs `npm ci && npm run build`.
 
 Tasks:
 1. `npm create vite@latest frontend -- --template react-ts`; install `wagmi viem @rainbow-me/rainbowkit @tanstack/react-query`. **Read the installed wagmi/RainbowKit versions' actual APIs before writing config** (`getDefaultConfig` from RainbowKit v2).
@@ -791,7 +791,7 @@ Verify: run dev server, connect MetaMask on Sepolia (**[HUMAN]** for the wallet 
 ---
 
 ### Phase 15 — Client flow
-**Status: NOT STARTED**
+**Status: DONE** (via the Phase 14 `/ui-drop` — see that entry). `frontend/src/pages/CreateJob.jsx` is a 4-step wizard (Who / The money / The rules / Fund it) with address validation, a dynamic milestone list, ETH-vs-USDC choice including the **real two-signature approve → createJob** sequence (`useUsdcApprove`), timelock presets (3/7/14 days, all within MIN/MAX), and a fee/net preview. `JobDetail.jsx` gives the client Approve / Ask-for-changes(reason) / Open-a-dispute per SUBMITTED milestone, Cancel while FUNDED, and the withdraw banner. `TxButton` renders the shared tx lifecycle off `useEscrowWrite` (wallet → pending → success). **Deviation from this plan:** the design has **no USD-priced mode**, so `createJobUsd` is unused by the UI (the contract still supports it, and the live ETH/USD quote this phase envisioned isn't in the design). **The design's per-job arbitrator field is why the contract gained an arbitrator param** — see the `feat: per-job arbitrator` commit.
 
 Tasks:
 1. `CreateJobForm`: freelancer address, token select (ETH / USDC), milestone rows (description + amount), timelock select. USD mode: amounts in USD, live ETH quote via `useReadContract` on the price feed (`latestRoundData`), display converted ETH, then call `createJobUsd`. ETH/USDC mode: plain `createJob` (USDC path: `approve` then `createJob` — two-step TxButton with allowance check via `useReadContract` on `allowance`).
@@ -805,7 +805,7 @@ Verify: `npx tsc --noEmit`; live click-through **[HUMAN]**.
 ---
 
 ### Phase 16 — Freelancer + arbitrator flows
-**Status: NOT STARTED**
+**Status: DONE** (via the Phase 14 `/ui-drop` — see that entry). Roles are derived per-job from the connected address (`useRole` → client/freelancer/arbitrator/observer) and each role gets its own explanatory "stamp" plus only the actions valid for its role **and** the current state. Freelancer: Accept, Submit (file → `lib/ipfs.js` Pinata upload → CID → `submitMilestone`), raise dispute with evidence upload, withdraw. Arbitrator: `pages/ArbitratorDesk.jsx` lists jobs naming you as arbitrator, and the ruling panel is a 0–100% split slider previewing both payouts + fee before `resolveDispute`. Time-lock: every SUBMITTED milestone shows a live countdown, and once expired a "Trigger the payout" button appears **for anyone** (`claimTimelockRelease`). **Remaining TODOs the designer flagged (need event history — do them in Phase 17):** the activity journal, and the arbitrator's side-by-side evidence view (both parties' `DisputeRaised` evidence CIDs).
 
 Tasks:
 1. `RoleBadge`/role detection: derive the viewer's role per job (client/freelancer/arbitrator/observer) from the connected address; render action sets accordingly.
@@ -819,7 +819,7 @@ Verify: `npx tsc --noEmit`; live click-through.
 ---
 
 ### Phase 17 — Reads via The Graph + timeline
-**Status: NOT STARTED**
+**Status: NOT STARTED** — this is the **next frontend phase**. Current state: the app reads straight from the chain — `useMyJobs` (in `frontend/src/hooks/useEscrow.js`) fetches `jobCounter` then multicalls `getJob` for ids `1..count` and filters client-side, which the designer marked `TODO: swap for a subgraph / indexer query once job volume grows`. The subgraph (Phase 13) is built and already repointed at the current contract/startBlock, so this phase is: deploy it to Studio **[HUMAN]**, add `VITE_SUBGRAPH_URL` + a `lib/graph.js`, swap `useMyJobs` to query it (keeping the RPC path as the documented fallback when the env var is unset), and finally **build the two views the design is still missing**: the **activity journal** (from `Activity` entities) and the arbitrator's **side-by-side evidence** view (both parties' `DisputeRaised` evidence CIDs) — the designer left both as explicit TODOs because they need event history.
 
 Tasks:
 1. `lib/graph.ts`: typed fetch against `VITE_SUBGRAPH_URL`; queries for job list, job detail + milestones, activities. If env var empty → hooks fall back to existing RPC reads (keep both paths; the fallback is a documented feature, not dead code).
