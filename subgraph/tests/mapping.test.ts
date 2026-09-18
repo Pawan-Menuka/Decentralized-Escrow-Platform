@@ -1,4 +1,4 @@
-import { Address, BigInt, ethereum, store } from "@graphprotocol/graph-ts";
+import { Address, BigInt, ethereum, store, ValueKind } from "@graphprotocol/graph-ts";
 import { assert, clearStore, createMockedFunction, test } from "matchstick-as/assembly/index";
 import { Job, Milestone } from "../generated/schema";
 import {
@@ -139,8 +139,8 @@ test("clears rejected submission data and supports resubmission", () => {
   assert.fieldEquals("Milestone", "1-0", "state", "PENDING");
   assert.notInStore("Milestone", "missing");
   let rejected = store.get("Milestone", "1-0")!;
-  assert.assertTrue(!rejected.isSet("deliverableCid"));
-  assert.assertTrue(!rejected.isSet("submittedAt"));
+  assert.i32Equals(rejected.get("deliverableCid")!.kind, ValueKind.NULL);
+  assert.i32Equals(rejected.get("submittedAt")!.kind, ValueKind.NULL);
 
   handleMilestoneSubmitted(milestoneSubmitted(0, "bafy-second", 202));
   assert.fieldEquals("Milestone", "1-0", "deliverableCid", "bafy-second");
