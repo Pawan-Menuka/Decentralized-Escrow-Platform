@@ -11,9 +11,8 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
 
   async function tokenFixture() {
     const base = await loadFixture(deployFixture);
-    const { owner } = base;
     const MockERC20 = await ethers.getContractFactory("MockERC20");
-    const token = await MockERC20.connect(owner).deploy(SUPPLY);
+    const token = await MockERC20.deploy(SUPPLY);
     await token.waitForDeployment();
     return { ...base, token };
   }
@@ -157,17 +156,17 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
 
   describe("fee-on-transfer rejection", function () {
     it("createJob reverts TokenAmountMismatch when the token withholds a transfer fee", async function () {
-      const { escrow, owner, client, freelancer } = await loadFixture(deployFixture);
+      const { escrow, client, freelancer } = await loadFixture(deployFixture);
       const FeeOnTransferERC20 = await ethers.getContractFactory("FeeOnTransferERC20");
-      const fot = await FeeOnTransferERC20.connect(owner).deploy(SUPPLY);
+      const fot = await FeeOnTransferERC20.deploy(SUPPLY);
       await fot.waitForDeployment();
       const fotAddress = await fot.getAddress();
 
       // owner's own transfer to the client ALSO withholds 1%, so send extra and read back
       // the client's actual (post-fee) balance rather than assuming it equals `A`.
-      await fot.connect(owner).transfer(client.address, A * 2n);
+      await fot.transfer(client.address, A * 2n);
       const clientBalance = await fot.balanceOf(client.address);
-      await fot.connect(client).approve(await escrow.getAddress(), clientBalance);
+      await (fot.connect(client) as typeof fot).approve(await escrow.getAddress(), clientBalance);
 
       const expectedReceived = clientBalance - clientBalance / 100n; // 1% withheld again on transferFrom
       await expect(
@@ -226,7 +225,7 @@ describe("FreelanceEscrow — ERC-20/USDC support (Phase 10)", function () {
       const { escrow, token, client, freelancer } = await tokenFixture();
       const tokenAddress = await token.getAddress();
       await token.mint(client.address, A);
-      await token.connect(client).approve(await escrow.getAddress(), A);
+      await (token.connect(client) as typeof token).approve(await escrow.getAddress(), A);
       await expect(
         escrow.connect(client).createJob(freelancer.address, ZERO, tokenAddress, [A], DEFAULT_TIMELOCK, { value: 1n }),
       )
