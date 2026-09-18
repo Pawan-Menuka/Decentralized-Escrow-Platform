@@ -144,7 +144,7 @@ The current upkeep scan checks only the first 100 active submissions. Choose one
 
 ## Phase 2 — Correct and harden the subgraph
 
-**Status: IN PROGRESS**
+**Status: DONE** — The subgraph now tracks concurrent disputes without prematurely returning jobs to `IN_PROGRESS`; indexes the snapshotted arbitrator, approved milestone count, open dispute count, lifecycle timestamps, and meaningful activity actors; clears rejected submission data; and marks contract-call fallback amounts/arbitrators with explicit verification flags. Withdrawals remain account/token-level rather than being attached to a job. The repository URL and deploy command are corrected, Graph dependencies are pinned, and six deterministic Matchstick tests cover creation/hydration, USD enrichment, rejection/resubmission, approval/auto-release, single and concurrent disputes, completion, and cancellation. A Linux CI job runs clean install, codegen, tests, and build.
 
 ### Goal
 
