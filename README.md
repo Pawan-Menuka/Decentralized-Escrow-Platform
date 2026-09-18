@@ -38,7 +38,7 @@ Terminal milestone states: `APPROVED`, `AUTO_RELEASED`, `RESOLVED`. A job is `CO
 
 - **Tier 1 — Core contract:** immutable `FreelanceEscrow.sol` with pull payments, CEI, reentrancy guards, dispute arbitration, and a time-lock auto-release. Verified on Sepolia Etherscan, >90% test coverage, Foundry fuzz invariants, zero high/medium Slither findings, green CI.
 - **Tier 2 — Chainlink core:** USD-denominated jobs via Chainlink Price Feeds, autonomous time-lock releases via Chainlink Automation, and ERC-20/USDC support.
-- **Tier 3 — Advanced off-chain:** IPFS deliverable/evidence storage via Pinata, a Chainlink Functions integration that auto-approves milestones on a merged GitHub PR, and a The Graph subgraph for event-driven reads.
+- **Tier 3 — Advanced off-chain:** IPFS deliverable/evidence storage via Pinata and a The Graph subgraph for event-driven reads. Chainlink Functions PR auto-approval is deliberately deferred to a future contract version so the deployed launch ABI remains frozen.
 - **Tier 4 — Frontend:** a Vite + React + wagmi + RainbowKit dapp (client, freelancer, and arbitrator flows) reading from the subgraph, deployed to Vercel.
 
 Total infrastructure cost target: **$0** (Sepolia faucets and free tiers throughout).
@@ -49,7 +49,7 @@ Total infrastructure cost target: **$0** (Sepolia faucets and free tiers through
 
 - `npx hardhat test` — 143 passing (happy paths, full wrong-caller/wrong-state guard matrix, fee accounting to the wei, integration lifecycles, reentrancy + pull-payment-DoS attack tests, USD price-feed conversion incl. staleness/invalid-price handling, Chainlink Automation check/perform upkeep incl. batching + forged-data re-validation, and a full ERC-20/USDC lifecycle).
 - `npx hardhat coverage` (`.solcover.js` skips `contracts/mocks`) — **100% lines, 93.06% branches, 100% functions, 98.98% statements** on `FreelanceEscrow.sol`.
-- **ERC-20/USDC support (Phase 10):** `createJob` accepts either native ETH (`token == address(0)`) or any ERC-20 token, pulling the total via `SafeERC20.safeTransferFrom` and crediting/withdrawing per-token throughout (`pendingWithdrawals`/`accruedFees` are already keyed by token). Fee-on-transfer and rebasing tokens are explicitly rejected: `createJob` measures the escrow's own balance delta around the transfer and reverts `TokenAmountMismatch` if it falls short of the requested total, rather than silently under-funding a job. `test/FreelanceEscrow.erc20.ts` covers the full lifecycle (create/accept/submit/approve/withdraw, dispute split, cancel refund) in a `MockERC20`, the `FeeOnTransferERC20` rejection, and an ETH-job + token-job coexisting in the same contract with independent balances/fees.
+- **ERC-20/USDC support (Phase 10):** `createJob` accepts either native ETH (`token == address(0)`) or an ERC-20 token, pulling the total via `SafeERC20.safeTransferFrom` and crediting/withdrawing per-token throughout (`pendingWithdrawals`/`accruedFees` are keyed by token). The launch website supports only ETH and official Sepolia USDC. `createJob` measures the escrow's balance delta and rejects tokens that deliver less than requested, including the tested fee-on-transfer mock; this initial check does **not** make rebasing or malicious tokens safe over a job's lifetime. `test/FreelanceEscrow.erc20.ts` covers the full lifecycle, dispute split, cancellation, fee-on-transfer rejection, and ETH/token coexistence.
 - Attack tests prove: (1) a malicious freelancer contract that re-enters `withdraw()` from its own `receive()` gains nothing beyond its credited balance — the whole transaction reverts (`EthTransferFailed`), since `nonReentrant` + the zero-before-transfer (CEI) pattern block the reentrant call; (2) **the pull-payment thesis** — a freelancer contract that unconditionally reverts on receiving ETH can NEVER brick the client's `approveMilestone` (no external call is made there), only its own subsequent `withdraw()` fails, isolating the damage to the bad actor.
 - Remaining uncovered branches are documented, not overlooked: two idempotent no-op guards in the internal scan-set helpers (`_addActive`/`_removeActive`) that are unreachable through the public API given the state-machine guards; and a few `nonReentrant` "already entered" branches on functions that make no external call themselves and so can only be reached via genuine cross-function reentrancy (not exercised — the only external-call surfaces, `withdraw`/`withdrawFees`, are the ones the attack tests target).
 
@@ -74,9 +74,11 @@ These run in CI on every push (`forge test`).
 
 ```bash
 cd frontend && npm install --legacy-peer-deps
-cp .env.example .env.local   # contract addresses pre-filled; add a WalletConnect id + Pinata JWT
+cp .env.example .env.local   # contract addresses pre-filled; add a WalletConnect id
 npm run dev
 ```
+
+> **Security note:** the current direct `VITE_PINATA_JWT` upload path is development-only because every Vite environment variable is public in the browser bundle. Production launch work will replace it with a server-side upload endpoint before deployment.
 
 Reads currently go straight to the chain via multicall; the subgraph in `subgraph/` is the drop-in upgrade for job lists and the activity journal.
 

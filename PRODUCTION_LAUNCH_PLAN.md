@@ -85,7 +85,7 @@ Establish a clean, reproducible baseline before product work begins.
 
 ## Phase 1 — Freeze launch scope and resolve product decisions
 
-**Status: NOT STARTED**
+**Status: DONE** — Launch scope is frozen in `docs/decisions/0001-sepolia-production-scope.md`: keep the deployed ABI; use numbered milestones rather than discarding titles; defer Chainlink Functions to v2; expose only ETH and official Sepolia USDC in the UI; retain per-job snapshotted arbitrators; and accept bounded Automation for low-volume Sepolia with manual release as the visible fallback. README, `SECURITY.md`, and `BLUEPRINT.md` now reflect these decisions. No contract change or redeployment is required.
 
 ### Goal
 
