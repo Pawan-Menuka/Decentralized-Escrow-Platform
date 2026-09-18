@@ -144,7 +144,7 @@ The current upkeep scan checks only the first 100 active submissions. Choose one
 
 ## Phase 2 — Correct and harden the subgraph
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
 
 ### Goal
 
@@ -201,6 +201,11 @@ Create the real `/frontend` application and port only reusable presentation work
 ### Tasks
 
 - Scaffold Vite + React + TypeScript under `frontend/`.
+- Migrate the existing JavaScript/JSX application to TypeScript/TSX rather than maintaining parallel JavaScript and TypeScript frontend code:
+  - Add a frontend-specific strict `tsconfig.json` and React/Vite type dependencies.
+  - Convert components, pages, hooks, configuration, and frontend utilities from `.js`/`.jsx` to `.ts`/`.tsx`.
+  - Type wallet addresses, chain configuration, environment variables, contract arguments/results, transaction state, and GraphQL responses.
+  - Keep The Graph mapping in its independent AssemblyScript workspace; do not include `subgraph/` in either the root or frontend TypeScript project.
 - Install pinned compatible versions of React, Vite, wagmi, viem, RainbowKit, TanStack Query, and React Router.
 - Commit `frontend/package-lock.json`.
 - Add scripts for `dev`, `build`, `preview`, `typecheck`, `lint`, `test`, and `test:e2e`.
@@ -239,6 +244,7 @@ Do not add `VITE_PINATA_JWT`.
 ### Exit criteria
 
 - `frontend/` is tracked and builds from a clean install.
+- Frontend application source is TypeScript/TSX, passes strict typechecking, and contains no unexplained `.js`/`.jsx` application modules.
 - The production shell matches the approved design direction.
 - Public routes render without a wallet.
 - Wallet connection and network switching work.
