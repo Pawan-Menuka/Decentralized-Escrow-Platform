@@ -6,10 +6,12 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "graph deploy <SUBGRAPH_SLUG>"
+    "test": "graph test -v 0.6.0",
+    "deploy": "graph deploy"
   },
   "devDependencies": {
-    "@graphprotocol/graph-cli": "latest",
-    "@graphprotocol/graph-ts": "latest"
+    "@graphprotocol/graph-cli": "0.98.1",
+    "@graphprotocol/graph-ts": "0.38.2",
+    "matchstick-as": "0.6.0"
   }
 }

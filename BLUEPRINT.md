@@ -740,7 +740,7 @@ Verify: open gateway URL; Etherscan shows the CID in the tx.
 ---
 
 ### Phase 12 — Chainlink Functions: GitHub PR auto-approval (HIGH RISK — time-boxed)
-**Status: NOT STARTED**
+**Status: DEFERRED TO V2** — Production-scope decision recorded in `docs/decisions/0001-sepolia-production-scope.md`. GitHub PR auto-approval is not required for the Sepolia website launch and would require another contract deployment after the ABI was integrated with the frontend and subgraph. The design below is retained as a future-version reference, but Phase 12 is removed from the launch Definition of Done.
 
 **Time-box: if this fights back for more than ~5 working sessions, ship without it, mark it "in progress" in README, and move on. A broken wow-feature is worse than an absent one.**
 
@@ -859,7 +859,7 @@ Verify: watch the video link in an incognito window; load the Vercel URL without
 |---|---|
 | 1 | Verified on Sepolia Etherscan, >90% coverage, fuzz invariants pass, Slither clean (no high/medium), CI green, README has state tables + threat model |
 | 2 | Keeper upkeep live and observed firing on Sepolia, price-staleness handled + tested, USDC path tested (incl. fee-on-transfer rejection) |
-| 3 | One full lifecycle where a merged GitHub PR auto-approves a milestone; all events queryable via subgraph |
+| 3 | Deliverable/evidence CIDs work through IPFS; all lifecycle events are queryable through the deployed subgraph. Chainlink Functions PR auto-approval is deferred to v2. |
 | 4 | A recruiter can watch the 3-min video and understand the whole system without connecting a wallet |
 
 ---
@@ -882,7 +882,7 @@ Verify: watch the video link in an incognito window; load the Vercel URL without
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| **Chainlink Functions integration (Phase 12) burns weeks** | High — the source plan calls it "the fiddliest part" | Hard time-box (5 sessions), public-repos-only (no secrets management), ship without it if it fights back |
+| **Chainlink Functions integration (Phase 12) burns weeks** | Deferred — it would require another ABI/deployment migration | Keep as a v2 feature; do not block the Sepolia website launch |
 | `@chainlink/contracts` import paths differ from training data | High | Always `ls node_modules/@chainlink/contracts/src/v0.8/` before writing imports |
 | OZ v5 vs v4 API drift (Ownable ctor, Pausable hooks, SafeERC20 usage) | Medium | Read installed sources first; the blueprint already encodes v5 patterns |
 | Foundry on Windows friction | Medium | Install via foundryup in Git Bash; if broken, run forge only in CI (ubuntu) and note it — invariants still gate merges |
