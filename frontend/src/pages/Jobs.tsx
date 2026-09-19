@@ -4,8 +4,9 @@ import { useMyJobs, useWithdrawable, useEscrowWrite } from '../hooks/useEscrow';
 import { fmtAmount } from '../lib/format';
 import { T, mono, ticket, STATE_COLOR } from '../theme';
 import TxButton from '../components/TxButton';
+import type { Job } from '../types';
 
-function JobCard({ job }) {
+function JobCard({ job }: { job: Job & { id: number } }) {
   return (
     <Link to={`/jobs/${job.id}`} style={{ display: 'block', border: `1px solid ${T.line}`, background: T.panel, padding: '14px 18px', color: 'inherit' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 130px 170px', gap: 16, alignItems: 'center' }}>

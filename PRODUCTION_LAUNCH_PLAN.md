@@ -192,7 +192,7 @@ npm run build
 
 ## Phase 3 — Scaffold the tracked production frontend
 
-**Status: NOT STARTED**
+**Status: DONE** — The tracked Vite application now uses strict TypeScript/TSX throughout its application source, with typed domain, contract, GraphQL, transaction, wallet, and environment boundaries. Dependencies are pinned with a reproducible lockfile; typecheck, lint, unit-test, build, and Playwright scripts are present; Sepolia is the only configured chain; startup fails closed with a visible configuration screen; public, arbitrator, and security routes are registered; and the browser-side Pinata credential path has been removed in favor of the Phase 5 server endpoint. Clean-install dry-run, strict typecheck, lint, unit tests, production build, and Playwright test discovery pass. The existing bundle-size and dependency-audit findings remain tracked for the hardening phases.
 
 ### Goal
 
