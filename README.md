@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform/actions/workflows/ci.yml)
 
-**Live on Sepolia** — verified contract: [`0x85DBE339432cd7960FADFef78e2E6981025bD4BA`](https://sepolia.etherscan.io/address/0x85DBE339432cd7960FADFef78e2E6981025bD4BA#code) (ETH/USD price feed: Chainlink `0x694AA1769357215DE4FAC081bf1f309aDC325306`).
+**Live on Sepolia** — verified contract: [`0x85DBE339432cd7960FADFef78e2E6981025bD4BA`](https://sepolia.etherscan.io/address/0x85DBE339432cd7960FADFef78e2E6981025bD4BA#code), supported USDC: [`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`](https://sepolia.etherscan.io/address/0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238), ETH/USD price feed: Chainlink `0x694AA1769357215DE4FAC081bf1f309aDC325306`.
 
 A milestone-based escrow protocol for freelance work on Ethereum (Sepolia testnet). A client creates and funds a job split into milestones; a freelancer accepts the job and submits work per milestone; the client approves (releasing funds) or disputes; a trusted arbitrator resolves disputes with an arbitrary split; and if the client goes silent after a submission, funds auto-release to the freelancer once a time-lock expires. All fund movement uses the pull-payment pattern, and the protocol skims a small, capped basis-point fee on every release to the freelancer.
 
@@ -78,7 +78,7 @@ cp .env.example .env.local   # contract addresses pre-filled; add a WalletConnec
 npm run dev
 ```
 
-> **Security note:** the current direct `VITE_PINATA_JWT` upload path is development-only because every Vite environment variable is public in the browser bundle. Production launch work will replace it with a server-side upload endpoint before deployment.
+> **Security note:** the browser upload client contains no Pinata credential and calls `/api/ipfs`. Phase 5 implements that authenticated server-side endpoint; until then uploads fail safely rather than exposing a secret.
 
 Reads currently go straight to the chain via multicall; the subgraph in `subgraph/` is the drop-in upgrade for job lists and the activity journal.
 

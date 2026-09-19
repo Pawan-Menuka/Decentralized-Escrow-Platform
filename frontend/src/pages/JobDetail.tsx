@@ -57,7 +57,7 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
 
 export default function JobDetail() {
   const { jobId } = useParams();
-  const { job, milestones, refetch, isLoading } = useJob(jobId);
+  const { job, milestones, refetch, isLoading, isFetching, isStale, isError, error, source } = useJob(jobId);
   const role = useRole(job);
   // Balances are per-token on-chain — scope this page's banner to the job's token.
   const { amount: withdrawable, refetch: refetchBal } = useWithdrawable(job?.token);
@@ -68,7 +68,16 @@ export default function JobDetail() {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
-  if (isLoading || !job) return <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.mut, fontFamily: mono, fontSize: 12 }}>reading the chain…</main>;
+  if (isLoading) return <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.mut, fontFamily: mono, fontSize: 12 }}>reading authoritative contract state…</main>;
+  if (isError || !job) return (
+    <main role="alert" style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div style={{ border: `1px solid ${T.red}`, padding: 24, color: T.body }}>
+        <div style={{ color: T.red, marginBottom: 8 }}>Could not load this job.</div>
+        <div style={{ color: T.sub, marginBottom: 16 }}>{error instanceof Error ? error.message : 'The RPC request failed.'}</div>
+        <button onClick={() => void refetch()} style={btn('quiet')}>Try again</button>
+      </div>
+    </main>
+  );
 
   const token = job.token;
   const timelock = Number(job.timelock);
@@ -104,6 +113,11 @@ export default function JobDetail() {
       <aside style={{ borderRight: `1px solid ${T.line}`, padding: '22px 20px' }}>
         <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>
           <Link to="/jobs" style={{ color: T.mut }}>JOBS</Link> <span style={{ color: T.mut }}>/ #{String(jobId).padStart(4, '0')}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, fontFamily: mono, fontSize: 9, color: isStale ? T.amber : T.mut }}>
+          <span>{source === 'rpc' ? 'AUTHORITATIVE RPC' : source?.toUpperCase()}</span>
+          {isStale && <span>· STALE</span>}
+          <button onClick={() => void refetch()} disabled={isFetching} style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: T.blueT, cursor: 'pointer', fontFamily: mono, fontSize: 9 }}>{isFetching ? 'REFRESHING…' : 'REFRESH'}</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 500 }}>Job #{String(jobId).padStart(4, '0')}</h1>

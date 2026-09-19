@@ -16,6 +16,7 @@ jobs:
           cache: npm
       - run: npm ci --legacy-peer-deps
       - run: npx hardhat compile
+      - run: npm run check:abi
       - run: npx hardhat test
       - run: npx hardhat coverage
 
@@ -51,6 +52,15 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
 
   subgraph:
     name: Subgraph (codegen + test + build)

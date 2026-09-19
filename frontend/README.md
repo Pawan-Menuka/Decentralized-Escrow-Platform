@@ -36,10 +36,13 @@ src/
   types.ts              shared frontend domain types
   theme.ts              visual tokens and typed style helpers
   config/env.ts         runtime public-environment validation
+  config/deployment.ts  generated canonical Sepolia deployment
   config/wagmi.ts       Sepolia-only wallet/RPC configuration
-  config/contract.ts    deployed addresses and contract ABI
-  hooks/useEscrow.ts    contract reads, writes, and UI adapters
-  lib/                  typed formatting, graph, and IPFS clients
+  config/contract.ts    generated ABI and runtime addresses
+  domain/               contract-to-UI adapters and domain types
+  services/read/        Graph discovery plus authoritative RPC fallback
+  hooks/useEscrow.ts    React Query and transaction hooks
+  lib/                  typed formatting and IPFS clients
   components/           shell and shared UI
   pages/                public and role-specific routes
 ```

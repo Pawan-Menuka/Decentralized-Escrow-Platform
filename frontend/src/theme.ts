@@ -14,13 +14,6 @@ export const T = {
 export const mono = "'IBM Plex Mono', monospace";
 export const sans = "'IBM Plex Sans', sans-serif";
 
-// Milestone state enum — order MUST match the contract's enum.
-// FreelanceEscrow.MilestoneState is: NONE, PENDING, SUBMITTED, APPROVED, DISPUTED,
-// RESOLVED, AUTO_RELEASED — index 0 is the "does not exist" sentinel, so the list
-// is offset by one from the UI-only vocabulary below. CANCELLED is not a contract
-// milestone state; useEscrow synthesises it for milestones of a cancelled job
-// (cancellation is only possible pre-acceptance, so they're all still PENDING).
-export const STATE = ['NONE', 'PENDING', 'SUBMITTED', 'APPROVED', 'DISPUTED', 'RESOLVED', 'AUTO_RELEASED'];
 export const STATE_COLOR = {
   PENDING: T.mut, SUBMITTED: T.amber, APPROVED: T.green,
   DISPUTED: T.red, RESOLVED: T.violet, AUTO_RELEASED: T.auto, CANCELLED: T.cancel,
