@@ -33,6 +33,8 @@ If milestone approval *pushed* ETH to the freelancer, a freelancer contract that
 ### Denial of service via unbounded iteration
 Jobs are capped at `MAX_MILESTONES = 50`, bounding every per-job loop (`createJob`, dispute bookkeeping). The Chainlink Automation scan set (`activeSubmitted`, Phase 9) is a compact array maintained with **swap-and-pop** and an index map, so upkeep never iterates over all jobs or over terminal milestones. `checkUpkeep` will additionally bound its scan per call.
 
+The bound has a liveness trade-off: `checkUpkeep` examines at most the first 100 active submissions. At higher volume, an expired entry outside that prefix can be delayed behind earlier non-expired entries. This is accepted for the low-volume Sepolia release, where `claimTimelockRelease` remains an unrestricted manual fallback. A mainnet or scaled version must use a rotating/ranged scan or an independently operated keeper strategy.
+
 ### Reject-griefing
 A client can repeatedly `rejectMilestone`, forcing the freelancer to resubmit indefinitely without ever approving. This is an accepted V1 limitation. The freelancer's recourse is `raiseDispute` (a rejected milestone can be resubmitted and then disputed), and the **time-lock** protects the *inverse* attack (a client who goes silent). A future version could cap rejections per milestone.
 
@@ -47,8 +49,10 @@ Each job stores the arbitrator resolved **at creation time** — either the one 
 ### Fee bounds
 `feeBps` is hard-capped at `MAX_FEE_BPS = 500` (5%) in both the constructor and `setFeeBps`; a malicious/compromised owner cannot set a confiscatory fee. The fee is read at release time and applies only to freelancer-bound funds (approval, auto-release, and the freelancer's share of a dispute) — never to client refunds or cancellations.
 
-### Fee-on-transfer tokens (Phase 10)
-When ERC-20 support lands, `createJob` will measure the balance actually received by `transferFrom` and **reject** any token that delivers less than requested (fee-on-transfer / rebasing tokens), rather than silently under-funding the escrow. ETH-only until then (`token` must be `address(0)`).
+### ERC-20 token behavior (Phase 10)
+ERC-20 support is implemented. `createJob` measures the balance actually received by `transferFrom` and rejects a token when the initial balance delta differs from the requested amount. This prevents the tested fee-on-transfer token from silently under-funding a job.
+
+That initial check does not prove that an arbitrary token is safe afterward. A rebasing, blocklisting, callback-heavy, upgradeable, or malicious token can change behavior or balances later. The launch website therefore supports only native ETH and official Sepolia USDC; arbitrary ERC-20 use through direct contract calls is unsupported.
 
 ### Value conservation / solvency
 The core safety property is that the contract can always pay everything it owes: `address(this).balance >= Σ unreleased milestone allocations + Σ pendingWithdrawals + accruedFees` (per token). Fund-on-create guarantees full funding up front; every release moves value from "escrowed" to "withdrawable" without creating or destroying any. This is asserted continuously by the Foundry invariant suite (`foundry/test/`).
@@ -75,7 +79,8 @@ Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on ever
 
 - Arbitration rests on a single party-chosen arbitrator per job (→ decentralized/multi-arbitrator arbitration).
 - No cap on client rejections per milestone (→ reject-griefing mitigation).
-- ETH-only until Phase 10 (→ ERC-20/USDC).
+- Automation's bounded prefix scan can delay entries at high active-submission counts; manual release remains available.
+- Arbitrary ERC-20 contracts are not endorsed; the launch UI supports only ETH and official Sepolia USDC.
 - Testnet only; unaudited.
 
 ## Reporting

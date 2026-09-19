@@ -16,6 +16,7 @@ jobs:
           cache: npm
       - run: npm ci --legacy-peer-deps
       - run: npx hardhat compile
+      - run: npm run check:abi
       - run: npx hardhat test
       - run: npx hardhat coverage
 
@@ -50,6 +51,38 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Build
         working-directory: frontend
+        run: npm run build
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
+
+  subgraph:
+    name: Subgraph (codegen + test + build)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: subgraph/package-lock.json
+      - name: Install
+        working-directory: subgraph
+        run: npm ci --legacy-peer-deps
+      - name: Codegen
+        working-directory: subgraph
+        run: npm run codegen
+      - name: Mapping tests
+        working-directory: subgraph
+        run: npm test
+      - name: Build
+        working-directory: subgraph
         run: npm run build
 
   slither:

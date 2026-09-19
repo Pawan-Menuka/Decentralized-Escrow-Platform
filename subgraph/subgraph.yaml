@@ -1,6 +1,6 @@
 specVersion: 1.0.0
 description: Subgraph indexing the FreelanceEscrow milestone-based escrow contract on Sepolia.
-repository: https://github.com/Bapm726/Decentralized-Escrow-Platform
+repository: https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform
 schema:
   file: ./schema.graphql
 dataSources:

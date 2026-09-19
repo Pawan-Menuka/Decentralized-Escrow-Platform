@@ -3,15 +3,25 @@ type Job @entity(immutable: false) {
   jobId: BigInt!
   client: Bytes!
   freelancer: Bytes!
+  # Not carried in JobCreated — read from the contract in handleJobCreated. Needed so
+  # the arbitrator desk can find jobs by arbitrator without falling back to RPC.
+  arbitrator: Bytes!
   token: Bytes!
   totalAmount: BigInt!
   milestoneCount: BigInt!
+  approvedMilestoneCount: BigInt!
+  openDisputeCount: BigInt!
   timelock: BigInt!
   state: String!
   createdAt: BigInt!
+  updatedAt: BigInt!
+  acceptedAt: BigInt
+  cancelledAt: BigInt
   usdTotal: BigInt
   ethUsdPrice: BigInt
   completedAt: BigInt
+  arbitratorVerified: Boolean!
+  milestonesHydrated: Boolean!
   milestones: [Milestone!]! @derivedFrom(field: "job")
   activities: [Activity!]! @derivedFrom(field: "job")
 }
@@ -21,6 +31,7 @@ type Milestone @entity(immutable: false) {
   job: Job!
   index: BigInt!
   amount: BigInt!
+  amountVerified: Boolean!
   state: String!
   deliverableCid: String
   submittedAt: BigInt
@@ -58,4 +69,5 @@ type Dispute @entity(immutable: false) {
   freelancerAmount: BigInt
   clientAmount: BigInt
   timestamp: BigInt!
+  resolvedAt: BigInt
 }

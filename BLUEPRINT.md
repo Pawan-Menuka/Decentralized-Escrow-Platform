@@ -740,7 +740,7 @@ Verify: open gateway URL; Etherscan shows the CID in the tx.
 ---
 
 ### Phase 12 — Chainlink Functions: GitHub PR auto-approval (HIGH RISK — time-boxed)
-**Status: NOT STARTED**
+**Status: DEFERRED TO V2** — Production-scope decision recorded in `docs/decisions/0001-sepolia-production-scope.md`. GitHub PR auto-approval is not required for the Sepolia website launch and would require another contract deployment after the ABI was integrated with the frontend and subgraph. The design below is retained as a future-version reference, but Phase 12 is removed from the launch Definition of Done.
 
 **Time-box: if this fights back for more than ~5 working sessions, ship without it, mark it "in progress" in README, and move on. A broken wow-feature is worse than an absent one.**
 
@@ -776,7 +776,7 @@ Verify: curl/fetch the query URL.
 ### ═══ TIER 4 — Frontend (contract is LOCKED from here — any ABI change means redoing 13+) ═══
 
 ### Phase 14 — Frontend scaffold + wallet
-**Status: DONE** — **delivered together with Phases 15 & 16 via a `/ui-drop` integration**, not built from this plan's steps. The human hand-designed the whole app ("Holdfast": Vite + React 18 + wagmi v2 + viem v2 + RainbowKit v2 + TanStack Query + react-router, **JSX not TS** — the design's choice supersedes this plan's TypeScript note) and it was integrated **verbatim, visuals untouched**, into `frontend/`. Scaffold, providers, routing, `ConnectButton`, and the Sepolia network gate all came from the design (`src/main.jsx`, `src/components/Shell.jsx`, `src/config/wagmi.js`). The real ABI lives in `frontend/src/config/FreelanceEscrow.abi.json`, kept in sync with the subgraph's copy by the root `npm run sync-abi` (`scripts/sync-abi.cjs`). `.claude/launch.json` runs the dev server (`npm --prefix frontend run dev`, port 5173). **All contract⇄UI differences are absorbed in `frontend/src/hooks/useEscrow.js`** — the seam the design provided (pages never call the contract): `jobCounter` (not `nextJobId`), **1-based job ids**, `Job.state` enum → `accepted`/`cancelled`/`total`, `deliverableCid` → `cid`, per-token `pendingWithdrawals(token, who)`/`withdraw(token)` with auto-token selection, and cancelled jobs surfacing their milestones as `CANCELLED`. `theme.js`'s `STATE` was realigned to `MilestoneState` (**index 0 is a `NONE` sentinel** — without this every milestone rendered one state too far along; safe because `StateRail`/`MoneyBar` key off state *names*, not that array). Verified: `npm run build` passes and a live Sepolia job renders real data through the design. **CI now has a `frontend` job** that runs `npm ci && npm run build`.
+**Status: DONE** — The original hand-designed Holdfast interface was integrated under `frontend/` and preserved as the visual basis of the production application. Production Launch Phases 3 and 4 subsequently migrated the tracked application to strict TypeScript/TSX, generated `frontend/src/abi/FreelanceEscrow.ts` from the Hardhat artifact, centralized Sepolia deployment data, and separated Graph discovery/history from authoritative RPC reads. Contract tuples are adapted in `src/domain/`, application reads flow through `src/services/read/`, job IDs remain 1-based, and pending withdrawals remain token/account-specific. CI now checks ABI/address drift and runs frontend build, typecheck, lint, and unit tests.
 
 Tasks:
 1. `npm create vite@latest frontend -- --template react-ts`; install `wagmi viem @rainbow-me/rainbowkit @tanstack/react-query`. **Read the installed wagmi/RainbowKit versions' actual APIs before writing config** (`getDefaultConfig` from RainbowKit v2).
@@ -819,10 +819,18 @@ Verify: `npx tsc --noEmit`; live click-through.
 ---
 
 ### Phase 17 — Reads via The Graph + timeline
-**Status: NOT STARTED** — this is the **next frontend phase**. Current state: the app reads straight from the chain — `useMyJobs` (in `frontend/src/hooks/useEscrow.js`) fetches `jobCounter` then multicalls `getJob` for ids `1..count` and filters client-side, which the designer marked `TODO: swap for a subgraph / indexer query once job volume grows`. The subgraph (Phase 13) is built and already repointed at the current contract/startBlock, so this phase is: deploy it to Studio **[HUMAN]**, add `VITE_SUBGRAPH_URL` + a `lib/graph.js`, swap `useMyJobs` to query it (keeping the RPC path as the documented fallback when the env var is unset), and finally **build the two views the design is still missing**: the **activity journal** (from `Activity` entities) and the arbitrator's **side-by-side evidence** view (both parties' `DisputeRaised` evidence CIDs) — the designer left both as explicit TODOs because they need event history.
+**Status: IN PROGRESS — data layer DONE; the two new views are BLOCKED on the human.**
+
+**Done (read path):** Production Launch Phase 4 replaced the original single Graph helper with typed services under `frontend/src/services/read/`. `GraphReadService` handles public/account discovery and activity history; `RpcReadService` handles authoritative job/milestone state, public fallback discovery, and token/account withdrawal balances. The composite service reports its source and fallback reason, retries through TanStack Query, and automatically uses RPC when `VITE_SUBGRAPH_URL` is absent or the indexer fails. Contract and Graph values are normalized in `src/domain/` before reaching pages. Verified: drift check, strict typecheck, unit tests, and frontend build pass.
+
+**Subgraph change required by this:** `arbitrator` is **not** in the `JobCreated` event, so the subgraph didn't index it — which would have silently broken `ArbitratorDesk` (it filters jobs by arbitrator) the moment the subgraph path went live. Added `arbitrator: Bytes!` to the `Job` entity and `handleJobCreated` now reads the snapshot via `contract.try_getJob(jobId)` (it already binds the contract for milestone amounts). Schema + mapping rebuilt (`codegen` + `build` pass). **Re-deploying the subgraph is required for this field to exist.**
+
+**Blocked — do NOT build these without the human:**
+1. **Deploy the subgraph to Studio [HUMAN]** — needs their account + deploy key. Until then `VITE_SUBGRAPH_URL` is unset and the app runs on the RPC fallback (fully functional, just unindexed). Nothing can be verified against a live endpoint until this happens.
+2. **The activity journal + the arbitrator's side-by-side evidence view** — the data is ready (`fetchActivities` / `fetchDisputes`), but **the designs live in the human's `.dc.html` mockups, which were NOT part of the handoff drop**. The human hand-designs all UI (see the project CLAUDE.md and the `/ui-drop` contract) — **do not invent these screens.** Ask for the mockups, then wire them.
 
 Tasks:
-1. `lib/graph.ts`: typed fetch against `VITE_SUBGRAPH_URL`; queries for job list, job detail + milestones, activities. If env var empty → hooks fall back to existing RPC reads (keep both paths; the fallback is a documented feature, not dead code).
+1. `services/read/graph.ts` + `services/read/rpc.ts`: typed Graph discovery/activity queries and authoritative job/milestone/balance RPC reads. If the env var is empty or Graph fails, list queries fall back to RPC (a documented feature, not dead code).
 2. Jobs list page: "my jobs" (as client / as freelancer) + "all jobs" via Graph.
 3. `Timeline` component on job detail: renders `Activity` entities (created, accepted, submitted, approved, rejected, disputed, resolved, released, withdrawn) with timestamps and actor addresses.
 
@@ -851,7 +859,7 @@ Verify: watch the video link in an incognito window; load the Vercel URL without
 |---|---|
 | 1 | Verified on Sepolia Etherscan, >90% coverage, fuzz invariants pass, Slither clean (no high/medium), CI green, README has state tables + threat model |
 | 2 | Keeper upkeep live and observed firing on Sepolia, price-staleness handled + tested, USDC path tested (incl. fee-on-transfer rejection) |
-| 3 | One full lifecycle where a merged GitHub PR auto-approves a milestone; all events queryable via subgraph |
+| 3 | Deliverable/evidence CIDs work through IPFS; all lifecycle events are queryable through the deployed subgraph. Chainlink Functions PR auto-approval is deferred to v2. |
 | 4 | A recruiter can watch the 3-min video and understand the whole system without connecting a wallet |
 
 ---
@@ -874,7 +882,7 @@ Verify: watch the video link in an incognito window; load the Vercel URL without
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| **Chainlink Functions integration (Phase 12) burns weeks** | High — the source plan calls it "the fiddliest part" | Hard time-box (5 sessions), public-repos-only (no secrets management), ship without it if it fights back |
+| **Chainlink Functions integration (Phase 12) burns weeks** | Deferred — it would require another ABI/deployment migration | Keep as a v2 feature; do not block the Sepolia website launch |
 | `@chainlink/contracts` import paths differ from training data | High | Always `ls node_modules/@chainlink/contracts/src/v0.8/` before writing imports |
 | OZ v5 vs v4 API drift (Ownable ctor, Pausable hooks, SafeERC20 usage) | Medium | Read installed sources first; the blueprint already encodes v5 patterns |
 | Foundry on Windows friction | Medium | Install via foundryup in Git Bash; if broken, run forge only in CI (ubuntu) and note it — invariants still gate merges |

@@ -4,6 +4,7 @@ import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import { T, mono, sans, btn } from '../theme';
 import { ACTIVE_CHAIN, EXPLORER } from '../config/wagmi';
 import { ESCROW_ADDRESS } from '../config/contract';
+import type { CSSProperties } from 'react';
 
 function WrongNetworkGate() {
   const { isConnected } = useAccount();
@@ -24,7 +25,7 @@ function WrongNetworkGate() {
   );
 }
 
-const navStyle = ({ isActive }) => ({
+const navStyle = ({ isActive }: { isActive: boolean }): CSSProperties => ({
   color: isActive ? T.text : T.sub, fontSize: 13,
   borderBottom: isActive ? `1px solid ${T.blue}` : '1px solid transparent', paddingBottom: 2,
 });
@@ -41,7 +42,8 @@ export default function Shell() {
         <nav style={{ display: 'flex', gap: 20 }}>
           <NavLink to="/jobs" style={navStyle}>Jobs</NavLink>
           <NavLink to="/create" style={navStyle}>Create a job</NavLink>
-          <NavLink to="/disputes" style={navStyle}>Disputes</NavLink>
+          <NavLink to="/arbitrator" style={navStyle}>Arbitrator</NavLink>
+          <NavLink to="/about/security" style={navStyle}>Security</NavLink>
         </nav>
         <div style={{ flex: 1 }} />
         {ACTIVE_CHAIN.testnet && (
@@ -59,7 +61,7 @@ export default function Shell() {
         <span>everything on this site is public, on-chain data</span>
         <div style={{ flex: 1 }} />
         {ACTIVE_CHAIN.testnet && <span style={{ color: T.gold }}>SEPOLIA TEST NETWORK — NO REAL MONEY</span>}
-        <a href="https://github.com/your-org/holdfast" target="_blank" rel="noreferrer" style={{ color: T.mut }}>GitHub ↗</a>
+        <a href="https://github.com/Pawan-Menuka/Decentralized-Escrow-Platform" target="_blank" rel="noreferrer" style={{ color: T.mut }}>GitHub ↗</a>
       </footer>
     </div>
   );

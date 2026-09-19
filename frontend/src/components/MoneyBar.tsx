@@ -1,8 +1,16 @@
 import { T, mono, STATE_COLOR } from '../theme';
 import { fmtAmount } from '../lib/format';
+import type { Address } from 'viem';
+import type { Milestone, MilestoneState } from '../types';
+
+interface MoneyBarProps {
+  milestones: Milestone[];
+  token: Address;
+  legendLabels?: Partial<Record<MilestoneState, string>>;
+}
 
 // "Where the money is" — one segment per milestone, colored by state.
-export default function MoneyBar({ milestones, token, legendLabels }) {
+export default function MoneyBar({ milestones, token, legendLabels }: MoneyBarProps) {
   const total = milestones.reduce((a, m) => a + m.amount, 0n);
   if (total === 0n) return null;
   return (

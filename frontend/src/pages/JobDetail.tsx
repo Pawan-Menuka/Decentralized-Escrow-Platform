@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useJob, useRole, useEscrowWrite, useWithdrawable } from '../hooks/useEscrow';
 import { fmtAmount, net, fee, countdown, isEth } from '../lib/format';
@@ -8,8 +8,9 @@ import { EXPLORER } from '../config/wagmi';
 import TxButton from '../components/TxButton';
 import StateRail from '../components/StateRail';
 import MoneyBar from '../components/MoneyBar';
+import type { Milestone, MilestoneState, TransactionPhase } from '../types';
 
-const LEGEND = {
+const LEGEND: Partial<Record<MilestoneState, string>> = {
   APPROVED: 'paid to the freelancer', AUTO_RELEASED: 'paid automatically by the timer',
   DISPUTED: 'frozen until the arbitrator decides', SUBMITTED: 'submitted — on the clock',
   PENDING: 'still locked in escrow', RESOLVED: 'split by the arbitrator', CANCELLED: 'returned to the client',
@@ -19,15 +20,24 @@ const STAMP = {
   freelancer: ['You\u2019re the freelancer on this job', 'Submit your work milestone by milestone. Once the client approves — or the timer runs out — the money is yours to withdraw. Amounts show what you\u2019ll actually receive after the 1% fee.'],
   arbitrator: ['You\u2019re the arbitrator on this job', 'If a dispute is open, you choose how the frozen money is split between the two sides. Your ruling is final and executes immediately.'],
   observer: ['You\u2019re viewing as a guest', 'Everything on this page is public — no wallet needed to look around. Connect a wallet to take part. Anyone at all can trigger a payout once its timer expires.'],
-};
+} as const;
 
-function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase }) {
-  const [file, setFile] = useState(null);
+interface UploadPanelProps {
+  title: string;
+  confirmLabel: string;
+  confirmFn: string;
+  kind: 'primary' | 'danger';
+  onConfirm: (cid: string) => void;
+  onCancel: () => void;
+  phase: TransactionPhase;
+}
+
+function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase }: UploadPanelProps) {
   const [cid, setCid] = useState('');
   const [uploading, setUploading] = useState(false);
-  const pick = async (f) => {
-    setFile(f); setUploading(true);
-    try { setCid(await uploadToIpfs(f)); } catch (e) { alert(e.message); setFile(null); }
+  const pick = async (f: File) => {
+    setUploading(true);
+    try { setCid(await uploadToIpfs(f)); } catch (error) { alert(error instanceof Error ? error.message : 'Upload failed.'); }
     setUploading(false);
   };
   return (
@@ -36,7 +46,7 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ flex: 1, border: `1px dashed ${cid ? T.green : T.dim}`, padding: '10px 14px', cursor: 'pointer', fontSize: 12, color: cid ? T.greenT : T.sub, animation: uploading ? 'pulse 1.2s infinite' : 'none' }}>
           {uploading ? 'Uploading to IPFS…' : cid ? `Attached ✓ ${cid.slice(0, 10)}…` : '⊕ Click to attach a file'}
-          <input type="file" style={{ display: 'none' }} onChange={(e) => e.target.files[0] && pick(e.target.files[0])} />
+          <input type="file" style={{ display: 'none' }} onChange={(e) => { const picked = e.target.files?.[0]; if (picked) void pick(picked); }} />
         </label>
         <TxButton label={confirmLabel} fn={confirmFn} kind={kind} disabled={!cid} phase={phase} onClick={() => onConfirm(cid)} />
         <button onClick={onCancel} style={btn('quiet')}>Never mind</button>
@@ -47,18 +57,27 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
 
 export default function JobDetail() {
   const { jobId } = useParams();
-  const { job, milestones, refetch, isLoading } = useJob(jobId);
+  const { job, milestones, refetch, isLoading, isFetching, isStale, isError, error, source } = useJob(jobId);
   const role = useRole(job);
   // Balances are per-token on-chain — scope this page's banner to the job's token.
   const { amount: withdrawable, refetch: refetchBal } = useWithdrawable(job?.token);
   const w = useEscrowWrite();
-  const [open, setOpen] = useState(null); // { kind, i }
+  const [open, setOpen] = useState<{ kind: string; i?: number } | null>(null);
   const [reason, setReason] = useState('');
   const [split, setSplit] = useState(50);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
-  if (isLoading || !job) return <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.mut, fontFamily: mono, fontSize: 12 }}>reading the chain…</main>;
+  if (isLoading) return <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.mut, fontFamily: mono, fontSize: 12 }}>reading authoritative contract state…</main>;
+  if (isError || !job) return (
+    <main role="alert" style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div style={{ border: `1px solid ${T.red}`, padding: 24, color: T.body }}>
+        <div style={{ color: T.red, marginBottom: 8 }}>Could not load this job.</div>
+        <div style={{ color: T.sub, marginBottom: 16 }}>{error instanceof Error ? error.message : 'The RPC request failed.'}</div>
+        <button onClick={() => void refetch()} style={btn('quiet')}>Try again</button>
+      </div>
+    </main>
+  );
 
   const token = job.token;
   const timelock = Number(job.timelock);
@@ -67,9 +86,9 @@ export default function JobDetail() {
   const allDone = milestones.every((m) => ['APPROVED', 'AUTO_RELEASED', 'RESOLVED'].includes(m.state));
   const jobState = job.cancelled ? 'Cancelled' : anyDisputed ? 'In dispute' : allDone ? 'Completed' : 'In progress';
   const jobColor = job.cancelled ? STATE_COLOR.CANCELLED : anyDisputed ? T.red : allDone ? T.green : T.blue;
-  const done = (fnAfter) => () => { refetch(); refetchBal(); setOpen(null); setReason(''); w.reset(); fnAfter?.(); };
+  const done = (fnAfter?: () => void) => () => { void refetch(); void refetchBal(); setOpen(null); setReason(''); w.reset(); fnAfter?.(); };
 
-  const statusFor = (m, cd) => {
+  const statusFor = (m: Milestone, cd: ReturnType<typeof countdown>): string => {
     switch (m.state) {
       case 'APPROVED': return role === 'freelancer' ? `Approved — ${fmtAmount(net(m.amount), token)} was credited to you.` : `Approved — the freelancer was paid ${fmtAmount(net(m.amount), token)}.`;
       case 'AUTO_RELEASED': return 'Paid automatically — the client didn\u2019t respond in time, so the contract released it on its own.';
@@ -85,7 +104,7 @@ export default function JobDetail() {
     }
   };
 
-  const jid = BigInt(jobId);
+  const jid = BigInt(jobId!);
   const dt = { fontFamily: mono, fontSize: 9, letterSpacing: 1.5, color: T.mut, alignSelf: 'center' };
   const dd = { margin: 0, fontFamily: mono, fontSize: 11 };
 
@@ -94,6 +113,11 @@ export default function JobDetail() {
       <aside style={{ borderRight: `1px solid ${T.line}`, padding: '22px 20px' }}>
         <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>
           <Link to="/jobs" style={{ color: T.mut }}>JOBS</Link> <span style={{ color: T.mut }}>/ #{String(jobId).padStart(4, '0')}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, fontFamily: mono, fontSize: 9, color: isStale ? T.amber : T.mut }}>
+          <span>{source === 'rpc' ? 'AUTHORITATIVE RPC' : source?.toUpperCase()}</span>
+          {isStale && <span>· STALE</span>}
+          <button onClick={() => void refetch()} disabled={isFetching} style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: T.blueT, cursor: 'pointer', fontFamily: mono, fontSize: 9 }}>{isFetching ? 'REFRESHING…' : 'REFRESH'}</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 500 }}>Job #{String(jobId).padStart(4, '0')}</h1>
@@ -135,8 +159,8 @@ export default function JobDetail() {
         </div>
         {milestones.map((m) => {
           const cd = countdown(m.submittedAt, timelock, now);
-          const isTx = (k) => open?.kind === k && open?.i === m.index;
-          const acts = [];
+          const isTx = (k: string) => open?.kind === k && open?.i === m.index;
+          const acts: ReactNode[] = [];
           if (m.state === 'SUBMITTED' && !job.cancelled) {
             if (role === 'client') {
               acts.push(<TxButton key="ap" label={`Approve & pay ${fmtAmount(net(m.amount), token)}`} fn="approveMilestone" kind="primary"
