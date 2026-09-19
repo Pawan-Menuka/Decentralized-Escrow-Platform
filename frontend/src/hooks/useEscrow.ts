@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ESCROW_ADDRESS, ESCROW_ABI, ERC20_ABI, USDC_ADDRESS, ETH_TOKEN } from '../config/contract';
 import { hasSubgraph, fetchJobsFor } from '../lib/graph';
 import { STATE } from '../theme';
+import type { Address } from 'viem';
+import type { EscrowWriteArgs, Job, JobRole, Milestone, MilestoneState, TransactionPhase } from '../types';
 
 const escrow = { address: ESCROW_ADDRESS, abi: ESCROW_ABI };
 
@@ -14,39 +16,48 @@ const escrow = { address: ESCROW_ADDRESS, abi: ESCROW_ABI };
 //   • the Job struct carries a `state` enum + `totalAmount`, not `accepted` /
 //     `cancelled` bools + `total`
 //   • milestones expose `deliverableCid`, not `cid`
-//   • MilestoneState index 0 is a NONE sentinel (see STATE in theme.js)
+//   • MilestoneState index 0 is a NONE sentinel (see STATE in theme.ts)
 //   • balances/withdrawals are per-token: pendingWithdrawals(token, who) and
 //     withdraw(token)
 
 /** JobState enum in the contract. */
 const JOB = { NONE: 0, FUNDED: 1, IN_PROGRESS: 2, COMPLETED: 3, DISPUTED: 4, CANCELLED: 5 };
 
+interface RawJob {
+  client: Address; freelancer: Address; arbitrator: Address; token: Address;
+  totalAmount: bigint; timelock: bigint; createdAt: bigint; milestoneCount: bigint; state: number;
+}
+
+interface RawMilestone { amount: bigint; state: number; deliverableCid: string; submittedAt: bigint }
+
 /** Maps the on-chain Job struct onto the shape the pages consume. */
-function adaptJob(raw) {
+function adaptJob(raw: unknown): Job | undefined {
   if (!raw) return undefined;
-  const state = Number(raw.state);
+  const value = raw as RawJob;
+  const state = Number(value.state);
   if (state === JOB.NONE) return undefined; // job doesn't exist
   return {
-    client: raw.client,
-    freelancer: raw.freelancer,
-    arbitrator: raw.arbitrator,
-    token: raw.token,
-    total: raw.totalAmount,
-    timelock: raw.timelock,
-    createdAt: raw.createdAt,
+    client: value.client,
+    freelancer: value.freelancer,
+    arbitrator: value.arbitrator,
+    token: value.token,
+    total: value.totalAmount,
+    timelock: value.timelock,
+    createdAt: value.createdAt,
     // The design models the lifecycle as two bools; the contract uses an enum.
     accepted: state === JOB.IN_PROGRESS || state === JOB.COMPLETED || state === JOB.DISPUTED,
     cancelled: state === JOB.CANCELLED,
-    milestoneCount: Number(raw.milestoneCount),
+    milestoneCount: Number(value.milestoneCount),
     state,
   };
 }
 
 /** Maps an on-chain Milestone onto the shape the pages consume. */
-function adaptMilestone(m, i, job) {
+function adaptMilestone(raw: unknown, i: number, job?: Job): Milestone {
+  const m = raw as RawMilestone;
   // A job can only be cancelled before acceptance, so its milestones are all still
   // PENDING on-chain — surface them as CANCELLED, which is what the design shows.
-  const state = job?.cancelled ? 'CANCELLED' : STATE[Number(m.state)] || 'PENDING';
+  const state = (job?.cancelled ? 'CANCELLED' : STATE[Number(m.state)] || 'PENDING') as MilestoneState;
   return {
     index: i,
     amount: m.amount,
@@ -57,16 +68,17 @@ function adaptMilestone(m, i, job) {
 }
 
 // ── Reads ──────────────────────────────────────────────────────────────────
-export function useJob(jobId) {
+export function useJob(jobId?: string) {
+  const numericId = jobId && /^\d+$/.test(jobId) ? BigInt(jobId) : 0n;
   const { data, refetch, isLoading } = useReadContracts({
     contracts: [
-      { ...escrow, functionName: 'getJob', args: [BigInt(jobId)] },
-      { ...escrow, functionName: 'getMilestones', args: [BigInt(jobId)] },
+      { ...escrow, functionName: 'getJob', args: [numericId] },
+      { ...escrow, functionName: 'getMilestones', args: [numericId] },
     ],
-    query: { refetchInterval: 12_000 }, // roughly every block
+    query: { enabled: numericId > 0n, refetchInterval: 12_000 }, // roughly every block
   });
   const job = adaptJob(data?.[0]?.result);
-  const milestones = (data?.[1]?.result || []).map((m, i) => adaptMilestone(m, i, job));
+  const milestones = ((data?.[1]?.result || []) as readonly unknown[]).map((m, i) => adaptMilestone(m, i, job));
   return { job, milestones, refetch, isLoading };
 }
 
@@ -92,7 +104,7 @@ export function useMyJobs() {
   // --- Subgraph path ---
   const { data: graphJobs, error: graphError } = useQuery({
     queryKey: ['myJobs', address],
-    queryFn: () => fetchJobsFor(address),
+    queryFn: () => fetchJobsFor(address as Address),
     enabled: useGraph && !!address,
     refetchInterval: 12_000,
     retry: 1,
@@ -111,7 +123,7 @@ export function useMyJobs() {
       const job = adaptJob(r.result);
       return job ? { id: ids[i], ...job } : null;
     })
-    .filter(Boolean)
+    .filter((job): job is Job & { id: number } => Boolean(job))
     .filter(
       (j) =>
         address &&
@@ -129,17 +141,18 @@ export function useMyJobs() {
  * non-zero (ETH first, then USDC). Returns the token alongside the amount so callers
  * can format and withdraw the right one.
  */
-export function useWithdrawable(token) {
+export function useWithdrawable(token?: Address) {
   const { address } = useAccount();
-  const probes = [{ ...escrow, functionName: 'pendingWithdrawals', args: [ETH_TOKEN, address] }];
-  if (USDC_ADDRESS) probes.push({ ...escrow, functionName: 'pendingWithdrawals', args: [USDC_ADDRESS, address] });
+  const who = address ?? ETH_TOKEN;
+  const probes = [{ ...escrow, functionName: 'pendingWithdrawals', args: [ETH_TOKEN, who] }];
+  probes.push({ ...escrow, functionName: 'pendingWithdrawals', args: [USDC_ADDRESS, who] });
 
   const { data, refetch } = useReadContracts({
     contracts: probes,
     query: { enabled: !!address, refetchInterval: 12_000 },
   });
-  const ethAmount = data?.[0]?.result ?? 0n;
-  const usdcAmount = data?.[1]?.result ?? 0n;
+  const ethAmount = (data?.[0]?.result as bigint | undefined) ?? 0n;
+  const usdcAmount = (data?.[1]?.result as bigint | undefined) ?? 0n;
 
   if (token) {
     const isUsdc = !!USDC_ADDRESS && token.toLowerCase() === USDC_ADDRESS.toLowerCase();
@@ -150,7 +163,7 @@ export function useWithdrawable(token) {
   return { amount: 0n, token: ETH_TOKEN, refetch };
 }
 
-export function useRole(job) {
+export function useRole(job?: Job): JobRole {
   const { address } = useAccount();
   if (!address || !job) return 'observer';
   const a = address.toLowerCase();
@@ -166,17 +179,17 @@ export function useRole(job) {
 export function useEscrowWrite() {
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: mining, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const phase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
-  const send = (functionName, args, value) =>
-    writeContract({ ...escrow, functionName, args, ...(value ? { value } : {}) });
+  const phase: TransactionPhase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
+  const send = <Name extends keyof EscrowWriteArgs>(functionName: Name, args: EscrowWriteArgs[Name], value?: bigint) =>
+    writeContract({ ...escrow, functionName, args, ...(value !== undefined ? { value } : {}) } as Parameters<typeof writeContract>[0]);
   return { send, phase, hash, error, reset };
 }
 
 export function useUsdcApprove() {
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: mining, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const phase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
-  const approve = (amount) =>
+  const phase: TransactionPhase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
+  const approve = (amount: bigint) =>
     writeContract({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [ESCROW_ADDRESS, amount] });
   return { approve, phase };
 }

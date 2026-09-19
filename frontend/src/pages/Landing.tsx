@@ -1,15 +1,10 @@
-import { useState, useEffect } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { T, mono } from '../theme';
 
-const S = { maxWidth: 1060, margin: '0 auto', padding: '0 24px', boxSizing: 'border-box' };
+const S: CSSProperties = { maxWidth: 1060, margin: '0 auto', padding: '0 24px', boxSizing: 'border-box' };
 
 export default function Landing() {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  const remain = Math.max(0, 223773 - Math.floor((now % 604800000) / 1000) % 223773 + 180000); // illustrative ticker
-  const d = Math.floor(remain / 86400), h = Math.floor((remain % 86400) / 3600), m = Math.floor((remain % 3600) / 60), s = remain % 60;
-  const p = (n) => String(n).padStart(2, '0');
   const promises = [
     { tag: 'FOR FREELANCERS', color: T.blue, head: 'The money exists before you start.', body: 'You can see the full amount sitting in the contract before you write a line. A silent client can\u2019t stall you — after 7 days, submitted work pays out on its own.' },
     { tag: 'FOR CLIENTS', color: T.green, head: 'Nothing pays out until you say so.', body: 'Money moves only when you approve a milestone — or when you\u2019ve had a full week to object and didn\u2019t. Bad work? Send it back with a note, or dispute it.' },
@@ -54,7 +49,7 @@ export default function Landing() {
               <text x="742" y="17" textAnchor="start" fill={T.auto} style={{ fontFamily: mono, fontSize: 10 }}>CLIENT SILENT 7 DAYS → PAID ANYWAY</text>
               <text x="560" y="104" textAnchor="middle" fill={T.cancel} style={{ fontFamily: mono, fontSize: 10 }}>DISAGREEMENT → DISPUTE</text>
               <text x="860" y="104" textAnchor="middle" fill={T.cancel} style={{ fontFamily: mono, fontSize: 10 }}>ARBITRATOR SPLITS IT</text>
-              <text x="575" y="24" textAnchor="middle" fill={T.auto} style={{ fontFamily: mono, fontSize: 11 }}>{`pays anyway in ${d}d ${p(h)}:${p(m)}:${p(s)}`}</text>
+              <text x="575" y="24" textAnchor="middle" fill={T.auto} style={{ fontFamily: mono, fontSize: 11 }}>manual claim remains available after the deadline</text>
             </svg>
           </div>
         </div>

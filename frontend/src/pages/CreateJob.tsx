@@ -1,37 +1,40 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { parseEther, parseUnits, isAddress, zeroAddress } from 'viem';
+import { getAddress, parseEther, parseUnits, isAddress, zeroAddress } from 'viem';
 import { useEscrowWrite, useUsdcApprove } from '../hooks/useEscrow';
 import { USDC_ADDRESS } from '../config/contract';
 import { T, mono, btn } from '../theme';
 import TxButton from '../components/TxButton';
+import type { CSSProperties } from 'react';
 
-const input = { width: '100%', boxSizing: 'border-box', background: T.bg, border: `1px solid ${T.line}`, color: T.text, fontFamily: mono, fontSize: 12, padding: '10px 12px' };
-const choice = (active) => ({ flex: 1, textAlign: 'left', padding: '12px 16px', cursor: 'pointer', borderRadius: 2, background: active ? 'rgba(57,160,255,0.08)' : 'transparent', border: active ? `1px solid ${T.blue}` : `1px solid ${T.line}`, color: active ? T.text : T.sub, fontSize: 13 });
-const TIMELOCKS = { '3 days': 3 * 86400, '7 days': 7 * 86400, '14 days': 14 * 86400 };
+const input: CSSProperties = { width: '100%', boxSizing: 'border-box', background: T.bg, border: `1px solid ${T.line}`, color: T.text, fontFamily: mono, fontSize: 12, padding: '10px 12px' };
+const choice = (active: boolean): CSSProperties => ({ flex: 1, textAlign: 'left', padding: '12px 16px', cursor: 'pointer', borderRadius: 2, background: active ? 'rgba(57,160,255,0.08)' : 'transparent', border: active ? `1px solid ${T.blue}` : `1px solid ${T.line}`, color: active ? T.text : T.sub, fontSize: 13 });
+const TIMELOCKS = { '3 days': 3 * 86400, '7 days': 7 * 86400, '14 days': 14 * 86400 } as const;
+type TimelockLabel = keyof typeof TIMELOCKS;
+interface MilestoneRow { title: string; amt: string }
 
 export default function CreateJob() {
   const nav = useNavigate();
   const [step, setStep] = useState(1);
   const [fAddr, setFAddr] = useState(''); const [aAddr, setAAddr] = useState('');
-  const [tok, setTok] = useState('ETH');
-  const [tl, setTl] = useState('7 days');
-  const [rows, setRows] = useState([{ title: '', amt: '' }, { title: '', amt: '' }]);
+  const [tok, setTok] = useState<'ETH' | 'USDC'>('ETH');
+  const [tl, setTl] = useState<TimelockLabel>('7 days');
+  const [rows, setRows] = useState<MilestoneRow[]>([{ title: '', amt: '' }, { title: '', amt: '' }]);
   const [approved, setApproved] = useState(false);
   const usdc = tok === 'USDC';
   const w = useEscrowWrite();
   const ap = useUsdcApprove();
 
-  const parseAmt = (v) => { const n = parseFloat(v); return isNaN(n) || n < 0 ? 0 : n; };
+  const parseAmt = (v: string) => { const n = parseFloat(v); return isNaN(n) || n < 0 ? 0 : n; };
   const total = rows.reduce((a, r) => a + parseAmt(r.amt), 0);
   const validRows = rows.filter((r) => r.title.trim() && parseAmt(r.amt) > 0);
-  const fmt = (v) => (usdc ? `${v.toLocaleString('en-US', { minimumFractionDigits: 2 })} USDC` : `${v.toFixed(4)} ETH`);
-  const toWei = (v) => (usdc ? parseUnits(String(v), 6) : parseEther(String(v)));
+  const fmt = (v: number) => (usdc ? `${v.toLocaleString('en-US', { minimumFractionDigits: 2 })} USDC` : `${v.toFixed(4)} ETH`);
+  const toWei = (v: number) => (usdc ? parseUnits(String(v), 6) : parseEther(String(v)));
 
   const create = () => {
     const amounts = validRows.map((r) => toWei(parseAmt(r.amt)));
     w.send('createJob',
-      [fAddr.trim(), aAddr.trim(), usdc ? USDC_ADDRESS : zeroAddress, amounts, BigInt(TIMELOCKS[tl])],
+      [getAddress(fAddr.trim()), getAddress(aAddr.trim()), usdc ? USDC_ADDRESS : zeroAddress, amounts, BigInt(TIMELOCKS[tl])],
       usdc ? undefined : toWei(total));
   };
 
@@ -119,7 +122,7 @@ export default function CreateJob() {
           <div style={{ fontSize: 12, color: T.sub, marginBottom: 20 }}>One rule protects the freelancer from silence: if you don&rsquo;t respond to submitted work in time, it pays out automatically.</div>
           <div style={{ fontSize: 12, color: T.sub, marginBottom: 8 }}>Your review window per milestone</div>
           <div style={{ display: 'flex', gap: 10 }}>
-            {Object.keys(TIMELOCKS).map((k) => (
+            {(Object.keys(TIMELOCKS) as TimelockLabel[]).map((k) => (
               <button key={k} onClick={() => setTl(k)} style={choice(tl === k)}>
                 <span style={{ display: 'block', fontWeight: 500 }}>{k}</span>
                 <span style={{ display: 'block', fontSize: 11, opacity: 0.6, marginTop: 2 }}>{k === '7 days' ? 'the usual choice' : k === '3 days' ? 'for fast-moving work' : 'for big deliverables'}</span>
