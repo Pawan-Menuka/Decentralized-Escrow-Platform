@@ -254,7 +254,7 @@ Do not add `VITE_PINATA_JWT`.
 
 ## Phase 4 — ABI, configuration, and read architecture
 
-**Status: NOT STARTED**
+**Status: DONE** — The Hardhat artifact now generates a typed `as const` frontend ABI and canonical Sepolia deployment module, while CI rejects ABI, contract-address, deployment-block, USDC-address, manifest, or README drift. Raw contract and Graph data are normalized through typed domain adapters. A composite read service uses The Graph for public/account discovery and activity history, direct RPC for authoritative detail and balances, and automatic RPC fallback when the subgraph is absent or fails. Public and wallet-filtered job lists now expose loading, empty, error, source, stale, fallback, retry, and manual-refresh states; transaction-critical detail reads come directly from RPC; role detection is address-derived; IDs are validated as 1-based; and ETH/USDC pending withdrawals are displayed separately. Hardhat compile, drift verification, strict typecheck, lint, seven unit tests, and the production build pass.
 
 ### Goal
 

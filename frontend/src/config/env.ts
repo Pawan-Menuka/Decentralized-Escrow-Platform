@@ -1,6 +1,7 @@
 import { getAddress, isAddress, zeroAddress, type Address } from 'viem';
+import { SEPOLIA_DEPLOYMENT } from './deployment';
 
-const EXPECTED_CHAIN_ID = 11155111;
+const EXPECTED_CHAIN_ID = SEPOLIA_DEPLOYMENT.chainId;
 const raw = import.meta.env;
 
 function address(value: string | undefined, name: string, issues: string[]): Address {
@@ -39,6 +40,13 @@ export const env = Object.freeze({
   subgraphUrl: url(raw.VITE_SUBGRAPH_URL, 'VITE_SUBGRAPH_URL', issues, false),
   ipfsGatewayUrl: url(raw.VITE_IPFS_GATEWAY_URL, 'VITE_IPFS_GATEWAY_URL', issues),
 });
+
+if (env.escrowAddress !== zeroAddress && env.escrowAddress.toLowerCase() !== SEPOLIA_DEPLOYMENT.contractAddress.toLowerCase()) {
+  issues.push('VITE_ESCROW_ADDRESS does not match the canonical Sepolia deployment.');
+}
+if (env.usdcAddress !== zeroAddress && env.usdcAddress.toLowerCase() !== SEPOLIA_DEPLOYMENT.usdcAddress.toLowerCase()) {
+  issues.push('VITE_USDC_ADDRESS does not match the supported Sepolia USDC address.');
+}
 
 if (!env.walletConnectProjectId) {
   issues.push('VITE_WALLETCONNECT_PROJECT_ID is required.');

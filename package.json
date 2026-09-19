@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "sync-abi": "node scripts/sync-abi.cjs"
+    "sync-abi": "node scripts/sync-abi.cjs",
+    "check:abi": "node scripts/sync-abi.cjs --check"
   },
   "keywords": [],
   "author": "",

@@ -1,6 +1,8 @@
 {
   "network": "sepolia",
+  "chainId": 11155111,
   "address": "0x85DBE339432cd7960FADFef78e2E6981025bD4BA",
+  "usdcAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   "constructorArgs": {
     "feeBps": 100,
     "arbitrator": "0xF176B879e2D37ba20A8ba8e219D0FbB44Ce4e589",

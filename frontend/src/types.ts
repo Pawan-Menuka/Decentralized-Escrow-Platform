@@ -10,6 +10,7 @@ export type MilestoneState =
   | 'CANCELLED';
 
 export type JobRole = 'client' | 'freelancer' | 'arbitrator' | 'observer';
+export type JobState = 'FUNDED' | 'IN_PROGRESS' | 'COMPLETED' | 'DISPUTED' | 'CANCELLED';
 export type TransactionPhase = 'idle' | 'wallet' | 'pending' | 'success';
 
 export interface EscrowWriteArgs {
@@ -24,7 +25,7 @@ export interface EscrowWriteArgs {
 }
 
 export interface Job {
-  id?: number;
+  id: number;
   client: Address;
   freelancer: Address;
   arbitrator: Address;
@@ -35,7 +36,7 @@ export interface Job {
   accepted: boolean;
   cancelled: boolean;
   milestoneCount: number;
-  state: number | string;
+  state: JobState;
 }
 
 export interface Milestone {

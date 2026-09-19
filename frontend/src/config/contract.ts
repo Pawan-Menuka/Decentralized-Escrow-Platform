@@ -1,20 +1,14 @@
 // ── BACKEND CONNECTED ─────────────────────────────────────────────────────
-// ESCROW_ABI is the real ABI of the deployed FreelanceEscrow contract, exported
-// from artifacts/contracts/FreelanceEscrow.sol/FreelanceEscrow.json → "abi".
-// Regenerate it after any contract change with the repo's `sync-abi` script.
-//
-// The deployed contract's names/shapes differ slightly from this app's original
-// placeholder (e.g. `jobCounter` not `nextJobId`; per-token withdrawals; job ids
-// start at 1). Every one of those differences is absorbed in
-// src/hooks/useEscrow.ts — pages still never call the contract directly.
-import ESCROW_ABI_JSON from './FreelanceEscrow.abi.json';
-import { zeroAddress, type Abi } from 'viem';
+// The typed ABI and canonical deployment are generated from the compiled artifact
+// and deployments/sepolia.json by the root `sync-abi` script.
+import { zeroAddress } from 'viem';
 import { env } from './env';
+import { freelanceEscrowAbi } from '../abi/FreelanceEscrow';
 
 export const ESCROW_ADDRESS = env.escrowAddress;
 export const USDC_ADDRESS = env.usdcAddress;
 
-export const ESCROW_ABI = ESCROW_ABI_JSON as Abi;
+export const ESCROW_ABI = freelanceEscrowAbi;
 
 /** Native ETH sentinel — the contract keys balances/fees by token, with 0x0 = ETH. */
 export const ETH_TOKEN = zeroAddress;
