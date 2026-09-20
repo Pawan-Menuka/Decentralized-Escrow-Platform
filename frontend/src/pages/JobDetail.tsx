@@ -1,8 +1,9 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useAccount, useSignMessage } from 'wagmi';
 import { useJob, useRole, useEscrowWrite, useWithdrawable } from '../hooks/useEscrow';
 import { fmtAmount, net, fee, countdown, isEth } from '../lib/format';
-import { uploadToIpfs, ipfsUrl } from '../lib/ipfs';
+import { uploadToIpfs, ipfsUrls } from '../lib/ipfs';
 import { T, mono, ticket, btn, short, STATE_COLOR, STATE_LABEL } from '../theme';
 import { EXPLORER } from '../config/wagmi';
 import TxButton from '../components/TxButton';
@@ -30,15 +31,37 @@ interface UploadPanelProps {
   onConfirm: (cid: string) => void;
   onCancel: () => void;
   phase: TransactionPhase;
+  jobId: number;
+  milestoneIndex: number;
+  transactionError?: string;
 }
 
-function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase }: UploadPanelProps) {
+function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase, jobId, milestoneIndex, transactionError }: UploadPanelProps) {
   const [cid, setCid] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const pick = async (f: File) => {
+    setUploadError('');
+    setCid('');
+    if (!address) {
+      setUploadError('Connect the participating wallet before uploading.');
+      return;
+    }
     setUploading(true);
-    try { setCid(await uploadToIpfs(f)); } catch (error) { alert(error instanceof Error ? error.message : 'Upload failed.'); }
-    setUploading(false);
+    try {
+      setCid(await uploadToIpfs(f, {
+        wallet: address,
+        jobId,
+        milestoneIndex,
+        signMessage: (message) => signMessageAsync({ message }),
+      }));
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
   };
   return (
     <div style={{ margin: '8px 0 4px', border: `1px solid ${T.line}`, borderLeft: `3px solid ${kind === 'danger' ? T.red : T.blue}`, padding: '14px 16px', background: T.panel }}>
@@ -46,11 +69,13 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ flex: 1, border: `1px dashed ${cid ? T.green : T.dim}`, padding: '10px 14px', cursor: 'pointer', fontSize: 12, color: cid ? T.greenT : T.sub, animation: uploading ? 'pulse 1.2s infinite' : 'none' }}>
           {uploading ? 'Uploading to IPFS…' : cid ? `Attached ✓ ${cid.slice(0, 10)}…` : '⊕ Click to attach a file'}
-          <input type="file" style={{ display: 'none' }} onChange={(e) => { const picked = e.target.files?.[0]; if (picked) void pick(picked); }} />
+          <input type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={(e) => { const picked = e.target.files?.[0]; if (picked) void pick(picked); }} />
         </label>
-        <TxButton label={confirmLabel} fn={confirmFn} kind={kind} disabled={!cid} phase={phase} onClick={() => onConfirm(cid)} />
+        <TxButton label={confirmLabel} fn={confirmFn} kind={kind} disabled={!cid} phase={phase} error={transactionError} onClick={() => onConfirm(cid)} />
         <button onClick={onCancel} style={btn('quiet')}>Never mind</button>
       </div>
+      <div style={{ fontSize: 10, color: T.mut, marginTop: 8 }}>Public forever: do not upload secrets or personal information. PDF, text, PNG, JPEG, or WebP; 4 MB maximum.</div>
+      {uploadError && <div role="alert" style={{ fontSize: 11, color: T.red, marginTop: 8 }}>{uploadError}</div>}
     </div>
   );
 }
@@ -150,7 +175,16 @@ export default function JobDetail() {
             <div style={{ flex: 1 }} />
             <TxButton label={`Withdraw ${fmtAmount(withdrawable, token)}`} fn="withdraw()" kind="green"
               phase={open?.kind === 'wd' ? w.phase : 'idle'}
-              onClick={() => { setOpen({ kind: 'wd' }); w.send('withdraw', [token]); }} onSuccess={done()} />
+              error={open?.kind === 'wd' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'wd' }); void w.send('withdraw', [token]); }} onSuccess={done()} />
+          </div>
+        )}
+        {role === 'client' && !job.accepted && !job.cancelled && (
+          <div style={{ borderBottom: `1px solid ${T.line}`, padding: '10px 22px', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 12, color: T.sub }}>The freelancer has not accepted. You can still cancel and recover the full escrow.</span>
+            <div style={{ flex: 1 }} />
+            <TxButton label="Cancel job & refund" fn="cancelJob" kind="danger" phase={open?.kind === 'cancel' ? w.phase : 'idle'} error={open?.kind === 'cancel' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'cancel' }); void w.send('cancelJob', [jid]); }} onSuccess={done()} />
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, padding: '18px 24px 10px' }}>
@@ -165,7 +199,8 @@ export default function JobDetail() {
             if (role === 'client') {
               acts.push(<TxButton key="ap" label={`Approve & pay ${fmtAmount(net(m.amount), token)}`} fn="approveMilestone" kind="primary"
                 phase={isTx('approve') ? w.phase : 'idle'}
-                onClick={() => { setOpen({ kind: 'approve', i: m.index }); w.send('approveMilestone', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
+                error={isTx('approve') ? w.error : undefined}
+                onClick={() => { setOpen({ kind: 'approve', i: m.index }); void w.send('approveMilestone', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
               acts.push(<button key="rj" onClick={() => setOpen({ kind: 'reject', i: m.index })} style={btn('quiet')}>
                 <span style={{ display: 'block', fontWeight: 500 }}>Ask for changes</span>
                 <span style={{ display: 'block', fontFamily: mono, fontSize: 9, opacity: 0.55, marginTop: 2 }}>rejectMilestone</span></button>);
@@ -178,7 +213,8 @@ export default function JobDetail() {
             if (cd.expired) {
               acts.push(<TxButton key="cl" label="Trigger the payout" fn="claimTimelockRelease" kind="primary"
                 phase={isTx('claim') ? w.phase : 'idle'}
-                onClick={() => { setOpen({ kind: 'claim', i: m.index }); w.send('claimTimelockRelease', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
+                error={isTx('claim') ? w.error : undefined}
+                onClick={() => { setOpen({ kind: 'claim', i: m.index }); void w.send('claimTimelockRelease', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
             }
           }
           if (m.state === 'PENDING' && role === 'freelancer' && job.accepted && !job.cancelled) {
@@ -199,7 +235,7 @@ export default function JobDetail() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>Milestone {m.index + 1}</div>
                   <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.5, marginTop: 3, textWrap: 'pretty' }}>{statusFor(m, cd)}</div>
-                  {m.cid && <div style={{ fontFamily: mono, fontSize: 10, marginTop: 4 }}><span style={{ color: T.mut }}>the work</span> <a href={ipfsUrl(m.cid)} target="_blank" rel="noreferrer">{m.cid.slice(0, 12)}… ↗</a></div>}
+                  {m.cid && <div style={{ fontFamily: mono, fontSize: 10, marginTop: 4 }}><span style={{ color: T.mut }}>the work</span> <a href={ipfsUrls(m.cid)[0]} target="_blank" rel="noreferrer">{m.cid.slice(0, 12)}… ↗</a> <a href={ipfsUrls(m.cid)[1]} target="_blank" rel="noreferrer" style={{ color: T.mut }}>backup ↗</a></div>}
                 </div>
                 <StateRail state={m.state}
                   countdownText={m.state === 'SUBMITTED' ? (cd.expired ? 'timer expired — anyone can trigger the payout' : `auto-pays in ${cd.text}`) : null}
@@ -223,7 +259,7 @@ export default function JobDetail() {
                     <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the layout breaks on mobile — see milestone spec §2"
                       style={{ flex: 1, background: T.bg, border: `1px solid ${T.line}`, color: T.text, fontSize: 12, padding: '8px 10px' }} />
                     <TxButton label="Send it back" fn="rejectMilestone" kind="danger" disabled={!reason.trim()} phase={w.phase}
-                      onClick={() => w.send('rejectMilestone', [jid, BigInt(m.index), reason.trim()])} onSuccess={done()} />
+                      error={w.error} onClick={() => void w.send('rejectMilestone', [jid, BigInt(m.index), reason.trim()])} onSuccess={done()} />
                     <button onClick={() => setOpen(null)} style={btn('quiet')}>Never mind</button>
                   </div>
                 </div>
@@ -241,7 +277,7 @@ export default function JobDetail() {
                     <span style={{ color: T.sub }}>Client gets back <span style={{ fontFamily: mono, color: T.text }}>{fmtAmount(m.amount - fShare, token)}</span></span>
                     <div style={{ flex: 1 }} />
                     <TxButton label={`Make it final — ${split}% to the freelancer`} fn={`resolveDispute(${split * 100} bps)`} kind="violet" phase={w.phase}
-                      onClick={() => w.send('resolveDispute', [jid, BigInt(m.index), split * 100])} onSuccess={done()} />
+                      error={w.error} onClick={() => void w.send('resolveDispute', [jid, BigInt(m.index), split * 100])} onSuccess={done()} />
                     <button onClick={() => setOpen(null)} style={btn('quiet')}>Never mind</button>
                   </div>
                 </div>
@@ -250,6 +286,8 @@ export default function JobDetail() {
                 <UploadPanel kind="primary"
                   title="Attach your finished work. It's stored on IPFS — a public file network — and only its fingerprint goes on-chain. Submitting starts the client's review clock."
                   confirmLabel="Submit it" confirmFn="submitMilestone" phase={w.phase}
+                  jobId={Number(jobId)} milestoneIndex={m.index}
+                  transactionError={w.error}
                   onConfirm={(cid) => w.send('submitMilestone', [jid, BigInt(m.index), cid])}
                   onCancel={() => setOpen(null)} />
               )}
@@ -257,6 +295,8 @@ export default function JobDetail() {
                 <UploadPanel kind="danger"
                   title="Attach your evidence (screenshots, briefs, conversations). It goes to the arbitrator, and this milestone freezes until they rule."
                   confirmLabel="Open the dispute" confirmFn="raiseDispute" phase={w.phase}
+                  jobId={Number(jobId)} milestoneIndex={m.index}
+                  transactionError={w.error}
                   onConfirm={(cid) => w.send('raiseDispute', [jid, BigInt(m.index), cid])}
                   onCancel={() => setOpen(null)} />
               )}

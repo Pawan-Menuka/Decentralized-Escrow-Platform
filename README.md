@@ -78,7 +78,9 @@ cp .env.example .env.local   # contract addresses pre-filled; add a WalletConnec
 npm run dev
 ```
 
-> **Security note:** the browser upload client contains no Pinata credential and calls `/api/ipfs`. Phase 5 implements that authenticated server-side endpoint; until then uploads fail safely rather than exposing a secret.
+> **Security note:** the browser contains no Pinata credential. It hashes the selected file, signs a short-lived wallet challenge, and sends the signed upload to `/api/ipfs`. The server validates the exact file and context before pinning it and a structured manifest. IPFS content is public; never upload secrets or personal information.
+
+For Vercel deployment, configure `PINATA_JWT` and a random `UPLOAD_CHALLENGE_SECRET` of at least 32 characters as server-only environment variables. Configure both `VITE_IPFS_GATEWAY_URL` and a different `VITE_IPFS_FALLBACK_GATEWAY_URL` as public frontend variables. Use `vercel dev` when exercising the frontend and Functions locally; Vite alone does not host `/api`.
 
 Reads currently go straight to the chain via multicall; the subgraph in `subgraph/` is the drop-in upgrade for job lists and the activity journal.
 
@@ -98,9 +100,9 @@ See [`SECURITY.md`](SECURITY.md) for the full threat model — reentrancy (pull-
 
 Static analysis (Slither, `crytic/slither-action`) runs in CI configured to fail on medium-or-higher findings; target is zero high/medium.
 
-## IPFS (Phase 11)
+## IPFS uploads
 
-Milestone deliverables and dispute evidence are pinned off-chain to IPFS via [Pinata](https://pinata.cloud); only the resulting CID is stored on-chain, in the contract's `deliverableCid`/`evidenceCid` string fields — keeping storage cheap while the content itself stays retrievable and content-addressed.
+Milestone deliverables and dispute evidence are pinned off-chain to IPFS via [Pinata](https://pinata.cloud). The CID stored on-chain identifies a JSON manifest containing the content CID, sanitized filename, MIME type, byte size, submitting wallet, job ID, milestone index, and timestamp. This preserves useful context while the file remains content-addressed.
 
 `scripts/lib/ipfs.ts` is a small Node helper (native `fetch`/`FormData`/`Blob`, no extra dependencies) exposing `pinJson`, `pinFile`, and `cidUrl`. `scripts/pin-test.ts` is a manual smoke test — run it with `npx hardhat run scripts/pin-test.ts` after setting `PINATA_JWT` in `.env` (a free Pinata account is enough) to pin a sample deliverable and print its CID + gateway URL.
 

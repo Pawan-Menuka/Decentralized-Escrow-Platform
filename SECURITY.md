@@ -57,6 +57,14 @@ That initial check does not prove that an arbitrary token is safe afterward. A r
 ### Value conservation / solvency
 The core safety property is that the contract can always pay everything it owes: `address(this).balance >= Σ unreleased milestone allocations + Σ pendingWithdrawals + accruedFees` (per token). Fund-on-create guarantees full funding up front; every release moves value from "escrowed" to "withdrawable" without creating or destroying any. This is asserted continuously by the Foundry invariant suite (`foundry/test/`).
 
+### Public IPFS uploads
+
+Deliverables and dispute evidence are public data. The interface warns users not to upload secrets or personal information, and it renders uploaded CIDs only as external links; it never injects gateway responses as HTML.
+
+The browser hashes the selected file and signs a five-minute server-issued challenge binding the wallet, digest, job, and milestone. The server verifies that signature and re-hashes the received bytes before pinning. It accepts only PDF, plain text, PNG, JPEG, and WebP files up to 4,000,000 bytes, validates their magic bytes/text encoding, sanitizes filenames, allows 10 upload requests per IP per minute and 20 eligible upload attempts per wallet per day, and aborts Pinata calls after 15 seconds. Provider bodies and credentials are never returned or logged. Each on-chain CID identifies a JSON manifest containing the content CID and its submitting context.
+
+The rate counters are process-local, so they are defense in depth rather than a globally durable quota across every serverless instance. The signed-wallet requirement is the primary anti-abuse boundary for this low-volume Sepolia release. A scaled or real-value release must move counters to a durable, shared store and add job-party authorization before accepting uploads.
+
 ## Design decisions that reduce risk
 
 - **Fund-on-create** (no separate `fundJob`): removes a limbo state where a freelancer could accept an unfunded job. Funding and creation are atomic.
@@ -82,6 +90,7 @@ Slither runs in CI (`.github/workflows/ci.yml`, `crytic/slither-action`) on ever
 - Automation's bounded prefix scan can delay entries at high active-submission counts; manual release remains available.
 - Arbitrary ERC-20 contracts are not endorsed; the launch UI supports only ETH and official Sepolia USDC.
 - Testnet only; unaudited.
+- IPFS upload rate limits are instance-local and suitable only for this low-volume Sepolia release.
 
 ## Reporting
 

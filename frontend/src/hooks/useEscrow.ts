@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
-import type { Address } from 'viem';
+import { useCallback, useState } from 'react';
+import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
+import type { Address, Hash } from 'viem';
 import { ESCROW_ABI, ESCROW_ADDRESS, ERC20_ABI, ETH_TOKEN, USDC_ADDRESS } from '../config/contract';
 import { readService } from '../services/read';
 import { roleFor } from '../domain/escrow';
 import type { EscrowWriteArgs, Job, JobRole, TransactionPhase } from '../types';
+import { friendlyTransactionError } from '../lib/transactions';
 
 const escrow = { address: ESCROW_ADDRESS, abi: ESCROW_ABI } as const;
 const queryPolicy = { staleTime: 12_000, retry: 2, refetchOnWindowFocus: true } as const;
@@ -131,19 +133,74 @@ export function useRole(job?: Job): JobRole {
 }
 
 export function useEscrowWrite() {
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
-  const { isLoading: mining, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const phase: TransactionPhase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
-  const send = <Name extends keyof EscrowWriteArgs>(functionName: Name, args: EscrowWriteArgs[Name], value?: bigint) =>
-    writeContract({ ...escrow, functionName, args, ...(value !== undefined ? { value } : {}) } as Parameters<typeof writeContract>[0]);
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
+  const [phase, setPhase] = useState<TransactionPhase>('idle');
+  const [hash, setHash] = useState<Hash>();
+  const [error, setError] = useState<string>();
+  const reset = useCallback(() => { setPhase('idle'); setHash(undefined); setError(undefined); }, []);
+  const send = async <Name extends keyof EscrowWriteArgs>(functionName: Name, args: EscrowWriteArgs[Name], value?: bigint) => {
+    setError(undefined);
+    if (!address || !publicClient) { setPhase('rejected'); setError('Connect a wallet on Sepolia first.'); return; }
+    try {
+      setPhase('simulating');
+      const request = { ...escrow, account: address, functionName, args, ...(value !== undefined ? { value } : {}) } as Parameters<typeof publicClient.simulateContract>[0];
+      const simulation = await publicClient.simulateContract(request);
+      setPhase('wallet');
+      const nextHash = await writeContractAsync(simulation.request as Parameters<typeof writeContractAsync>[0]);
+      setHash(nextHash);
+      setPhase('pending');
+      let replaced = false;
+      let equivalentReplacement = true;
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: nextHash,
+        onReplaced: (replacement) => {
+          replaced = true;
+          equivalentReplacement = replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input;
+          setHash(replacement.transaction.hash);
+          setPhase('replaced');
+        },
+      });
+      if (!equivalentReplacement) { setPhase('rejected'); setError('The pending transaction was replaced by a different wallet transaction. The requested action was not confirmed.'); return; }
+      if (receipt.status !== 'success') { setPhase('reverted'); setError('The transaction reverted on-chain. No false success was recorded.'); return; }
+      setPhase(replaced ? 'replaced' : 'success');
+    } catch (caught) {
+      const message = friendlyTransactionError(caught);
+      setError(message);
+      setPhase(/rejected|denied|refused/i.test(caught instanceof Error ? `${caught.name} ${caught.message}` : String(caught)) ? 'rejected' : 'reverted');
+    }
+  };
   return { send, phase, hash, error, reset };
 }
 
 export function useUsdcApprove() {
-  const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: mining, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const phase: TransactionPhase = isPending ? 'wallet' : mining ? 'pending' : isSuccess ? 'success' : 'idle';
-  const approve = (amount: bigint) =>
-    writeContract({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [ESCROW_ADDRESS, amount] });
-  return { approve, phase };
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
+  const [phase, setPhase] = useState<TransactionPhase>('idle');
+  const [error, setError] = useState<string>();
+  const approve = async (amount: bigint) => {
+    setError(undefined);
+    if (!address || !publicClient) { setPhase('rejected'); setError('Connect a wallet on Sepolia first.'); return; }
+    try {
+      setPhase('simulating');
+      const request = await publicClient.simulateContract({ address: USDC_ADDRESS, abi: ERC20_ABI, account: address, functionName: 'approve', args: [ESCROW_ADDRESS, amount] });
+      setPhase('wallet');
+      const hash = await writeContractAsync(request.request);
+      setPhase('pending');
+      let equivalentReplacement = true;
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, onReplaced: (replacement) => {
+        equivalentReplacement = replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input;
+        setPhase('replaced');
+      } });
+      if (!equivalentReplacement) { setPhase('rejected'); setError('The approval was replaced by a different wallet transaction. No allowance was confirmed.'); return; }
+      if (receipt.status !== 'success') throw new Error('Transaction reverted');
+      setPhase('success');
+    } catch (caught) {
+      setError(friendlyTransactionError(caught));
+      setPhase(/rejected|denied|refused/i.test(caught instanceof Error ? `${caught.name} ${caught.message}` : String(caught)) ? 'rejected' : 'reverted');
+    }
+  };
+  return { approve, phase, error, reset: () => { setPhase('idle'); setError(undefined); } };
 }

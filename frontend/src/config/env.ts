@@ -39,7 +39,12 @@ export const env = Object.freeze({
   sepoliaRpcUrl: url(raw.VITE_SEPOLIA_RPC_URL, 'VITE_SEPOLIA_RPC_URL', issues),
   subgraphUrl: url(raw.VITE_SUBGRAPH_URL, 'VITE_SUBGRAPH_URL', issues, false),
   ipfsGatewayUrl: url(raw.VITE_IPFS_GATEWAY_URL, 'VITE_IPFS_GATEWAY_URL', issues),
+  ipfsFallbackGatewayUrl: url(raw.VITE_IPFS_FALLBACK_GATEWAY_URL, 'VITE_IPFS_FALLBACK_GATEWAY_URL', issues),
 });
+
+if (env.ipfsGatewayUrl && env.ipfsFallbackGatewayUrl && env.ipfsGatewayUrl === env.ipfsFallbackGatewayUrl) {
+  issues.push('VITE_IPFS_FALLBACK_GATEWAY_URL must use a different gateway from VITE_IPFS_GATEWAY_URL.');
+}
 
 if (env.escrowAddress !== zeroAddress && env.escrowAddress.toLowerCase() !== SEPOLIA_DEPLOYMENT.contractAddress.toLowerCase()) {
   issues.push('VITE_ESCROW_ADDRESS does not match the canonical Sepolia deployment.');
