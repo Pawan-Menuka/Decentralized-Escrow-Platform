@@ -290,7 +290,9 @@ Create a type-safe, consistent boundary between contract, subgraph, and UI.
 
 ## Phase 5 — Secure IPFS upload service
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+Implementation is complete locally: `/api/ipfs` now uses a server-only Pinata token, exact-file wallet challenges, bounded file types and sizes, sanitized names, IP/wallet throttles, provider timeouts, safe errors, and contextual JSON manifests. The frontend signs the challenge, warns that uploads are public, and exposes configurable primary and backup gateways. Automated service and browser-client tests cover success and required failure paths. This phase remains in progress until the **[HUMAN]** Pinata/Vercel configuration and real gateway upload check are completed.
 
 ### Goal
 
@@ -325,7 +327,9 @@ Support deliverable and dispute-evidence uploads without exposing Pinata credent
 
 ## Phase 6 — Client flows
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+The client-flow implementation and automated local acceptance coverage are complete: the creation wizard validates neutral parties, exact integer milestone amounts and live contract limits; supports ETH, Chainlink-priced USD-to-ETH, and official Sepolia USDC; refreshes USD quotes immediately before simulation; and derives the two-step USDC flow from on-chain decimals and allowance. Client cancellation, approval, rejection, evidence-backed disputes, and token-aware withdrawals are connected. Every write is simulated before the wallet prompt, known custom errors have plain-language messages, and wallet, pending, replacement, rejection, revert, success, and retry states are represented without false success. Component/hook tests exercise all three funding modes and failure/retry/replacement behavior, while 76 Hardhat client-lifecycle tests cover the corresponding local contract paths. This phase remains in progress only for the real-wallet Sepolia acceptance run.
 
 ### Goal
 
