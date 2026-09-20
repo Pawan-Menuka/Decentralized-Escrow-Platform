@@ -109,8 +109,11 @@ export default function JobDetail() {
   const total = milestones.reduce((a, m) => a + m.amount, 0n);
   const anyDisputed = milestones.some((m) => m.state === 'DISPUTED');
   const allDone = milestones.every((m) => ['APPROVED', 'AUTO_RELEASED', 'RESOLVED'].includes(m.state));
-  const jobState = job.cancelled ? 'Cancelled' : anyDisputed ? 'In dispute' : allDone ? 'Completed' : 'In progress';
-  const jobColor = job.cancelled ? STATE_COLOR.CANCELLED : anyDisputed ? T.red : allDone ? T.green : T.blue;
+  const jobState = job.cancelled ? 'Cancelled' : !job.accepted ? 'Awaiting acceptance' : anyDisputed ? 'In dispute' : allDone ? 'Completed' : 'In progress';
+  const jobColor = job.cancelled ? STATE_COLOR.CANCELLED : !job.accepted ? T.amber : anyDisputed ? T.red : allDone ? T.green : T.blue;
+  const roleStamp = role === 'freelancer' && !job.accepted
+    ? ['You\u2019re the freelancer on this job', 'Accept the funded job to begin work. Until you accept it, the client can cancel and recover the full escrow.']
+    : STAMP[role];
   const done = (fnAfter?: () => void) => () => { void refetch(); void refetchBal(); setOpen(null); setReason(''); w.reset(); fnAfter?.(); };
 
   const statusFor = (m: Milestone, cd: ReturnType<typeof countdown>): string => {
@@ -125,7 +128,9 @@ export default function JobDetail() {
         return `Work submitted — the client has ${cd.long} to respond before it pays out on its own.`;
       case 'RESOLVED': return 'Settled — the arbitrator decided the split and both sides were paid out.';
       case 'CANCELLED': return 'Never started — the job was cancelled and this money went back to the client.';
-      default: return role === 'freelancer' ? 'Up next — submit your work here whenever it\u2019s ready.' : 'Not started — the money sits safely in escrow until work is submitted.';
+      default:
+        if (!job.accepted) return role === 'freelancer' ? 'Accept this funded job before starting work.' : 'Waiting for the freelancer to accept.';
+        return role === 'freelancer' ? 'Up next — submit your work here whenever it\u2019s ready.' : 'Not started — the money sits safely in escrow until work is submitted.';
     }
   };
 
@@ -149,8 +154,8 @@ export default function JobDetail() {
           <span style={ticket(jobColor)}>{jobState}</span>
         </div>
         <div style={{ border: `1px solid ${role === 'observer' ? T.line : T.blue}`, borderLeft: `3px solid ${role === 'observer' ? T.dim : T.blue}`, padding: '12px 14px', background: role === 'observer' ? 'transparent' : 'rgba(57,160,255,0.04)' }}>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 5 }}>{STAMP[role][0]}</div>
-          <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.55 }}>{STAMP[role][1]}</div>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 5 }}>{roleStamp[0]}</div>
+          <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.55 }}>{roleStamp[1]}</div>
         </div>
         <dl style={{ margin: '22px 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '9px 14px', fontSize: 12 }}>
           <dt style={dt}>CLIENT</dt><dd style={dd}><a href={`${EXPLORER}/address/${job.client}`} target="_blank" rel="noreferrer" style={{ color: T.body }}>{short(job.client)}</a></dd>
@@ -185,6 +190,14 @@ export default function JobDetail() {
             <div style={{ flex: 1 }} />
             <TxButton label="Cancel job & refund" fn="cancelJob" kind="danger" phase={open?.kind === 'cancel' ? w.phase : 'idle'} error={open?.kind === 'cancel' ? w.error : undefined}
               onClick={() => { setOpen({ kind: 'cancel' }); void w.send('cancelJob', [jid]); }} onSuccess={done()} />
+          </div>
+        )}
+        {role === 'freelancer' && !job.accepted && !job.cancelled && (
+          <div style={{ borderBottom: `1px solid ${T.line}`, padding: '10px 22px', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 12, color: T.sub }}>The escrow is funded. Accept this job to begin submitting milestones.</span>
+            <div style={{ flex: 1 }} />
+            <TxButton label="Accept job" fn="acceptJob" kind="primary" phase={open?.kind === 'accept' ? w.phase : 'idle'} error={open?.kind === 'accept' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'accept' }); void w.send('acceptJob', [jid]); }} onSuccess={done()} />
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, padding: '18px 24px 10px' }}>
@@ -230,7 +243,7 @@ export default function JobDetail() {
           const fShare = (m.amount * BigInt(split)) / 100n;
           return (
             <div key={m.index} style={{ borderTop: `1px solid ${T.hair}`, padding: '14px 24px 12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(200px,1fr) 460px 150px 150px', gap: 16, alignItems: 'center' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(180px,1fr) minmax(300px,460px) minmax(100px,150px) minmax(100px,150px)', gap: 16, alignItems: 'center' }}>
                 <div style={{ fontFamily: mono, fontSize: 12, color: T.mut }}>{`0${m.index + 1}`}</div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>Milestone {m.index + 1}</div>
