@@ -374,7 +374,9 @@ Complete every action available to a client.
 
 ## Phase 7 — Freelancer, arbitrator, and public flows
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+The local frontend now filters the arbitrator desk to unresolved assigned jobs, exposes loading/error/retry states, and displays indexed job activity with transaction/account links, rejection notes, and milestone-specific dispute evidence with backup gateways. Resolution supports exact 0–10,000 basis-point splits and displays the freelancer net, client refund, and protocol fee using the current on-chain fee; historical payouts no longer assume today's fee. Confirmed deliverable/dispute submissions now refresh state and close their forms. Replacement transactions remain pending until a successful equivalent receipt, including matching ETH value, has been verified. Local verification on 2026-09-26: all 36 frontend tests, strict TypeScript, ESLint, and production build pass; existing third-party annotation and bundle-size warnings remain. Countdowns and manual-release eligibility now use fresh Sepolia block timestamps instead of the device clock. A monotonic 45-second freshness window rejects failed or stalled reads, including after page remounts through the shared query cache. The UI explains unavailable timing and offers refresh. Remaining acceptance work includes real Pinata/Vercel credentials and submit/approve/withdraw flows, deployed subgraph evidence, concurrent-dispute end-to-end checks, and live RPC outage acceptance checks for the chain clock. No deployment or live transaction was performed in this pass.
 
 ### Goal
 
