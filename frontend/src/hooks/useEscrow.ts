@@ -142,6 +142,7 @@ export function useEscrowWrite() {
   const reset = useCallback(() => { setPhase('idle'); setHash(undefined); setError(undefined); }, []);
   const send = async <Name extends keyof EscrowWriteArgs>(functionName: Name, args: EscrowWriteArgs[Name], value?: bigint) => {
     setError(undefined);
+    setHash(undefined);
     if (!address || !publicClient) { setPhase('rejected'); setError('Connect a wallet on Sepolia first.'); return; }
     try {
       setPhase('simulating');
@@ -157,9 +158,10 @@ export function useEscrowWrite() {
         hash: nextHash,
         onReplaced: (replacement) => {
           replaced = true;
-          equivalentReplacement = replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input;
+          equivalentReplacement = equivalentReplacement && replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input && replacement.transaction.value === replacement.replacedTransaction.value;
           setHash(replacement.transaction.hash);
-          setPhase('replaced');
+          // Replacement is still pending until its receipt has been validated.
+          setPhase('pending');
         },
       });
       if (!equivalentReplacement) { setPhase('rejected'); setError('The pending transaction was replaced by a different wallet transaction. The requested action was not confirmed.'); return; }
@@ -191,8 +193,8 @@ export function useUsdcApprove() {
       setPhase('pending');
       let equivalentReplacement = true;
       const receipt = await publicClient.waitForTransactionReceipt({ hash, onReplaced: (replacement) => {
-        equivalentReplacement = replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input;
-        setPhase('replaced');
+        equivalentReplacement = equivalentReplacement && replacement.transaction.to === replacement.replacedTransaction.to && replacement.transaction.input === replacement.replacedTransaction.input && replacement.transaction.value === replacement.replacedTransaction.value;
+        setPhase('pending');
       } });
       if (!equivalentReplacement) { setPhase('rejected'); setError('The approval was replaced by a different wallet transaction. No allowance was confirmed.'); return; }
       if (receipt.status !== 'success') throw new Error('Transaction reverted');

@@ -13,7 +13,7 @@ vi.mock('wagmi', () => ({
   useWriteContract: () => ({ writeContractAsync: mocks.writeContractAsync }),
 }));
 
-import { useEscrowWrite } from './useEscrow';
+import { useEscrowWrite, useUsdcApprove } from './useEscrow';
 
 const hash = `0x${'1'.repeat(64)}` as const;
 const request = { to: '0x85DBE339432cd7960FADFef78e2E6981025bD4BA', input: '0x1234' };
@@ -65,5 +65,42 @@ describe('simulated transaction lifecycle', () => {
     await act(async () => { await result.current.send('cancelJob', [1n]); });
     expect(result.current.phase).toBe('reverted');
     expect(result.current.error).toContain('reverted on-chain');
+  });
+
+  it.each(['escrow', 'approval'] as const)('keeps a %s replacement pending until its receipt succeeds', async (kind) => {
+    let finish!: (receipt: { status: string }) => void;
+    mocks.waitForTransactionReceipt.mockImplementationOnce(({ onReplaced }: { onReplaced: (replacement: unknown) => void }) => {
+      onReplaced({ transaction: { ...request, value: 0n, hash }, replacedTransaction: { ...request, value: 0n } });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    const { result } = renderHook(() => ({ escrow: useEscrowWrite(), approval: useUsdcApprove() }));
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = kind === 'escrow' ? result.current.escrow.send('cancelJob', [1n]) : result.current.approval.approve(100n);
+      await Promise.resolve();
+    });
+    expect(result.current[kind].phase).toBe('pending');
+    await act(async () => { finish({ status: 'success' }); await pending; });
+    expect(result.current[kind].phase).toBe(kind === 'escrow' ? 'replaced' : 'success');
+  });
+
+  it('rejects a replacement that changes the ETH value with identical calldata', async () => {
+    mocks.waitForTransactionReceipt.mockImplementationOnce(async ({ onReplaced }: { onReplaced: (replacement: unknown) => void }) => {
+      onReplaced({ transaction: { ...request, value: 2n, hash }, replacedTransaction: { ...request, value: 1n } });
+      return { status: 'success' };
+    });
+    const { result } = renderHook(() => useEscrowWrite());
+    await act(async () => { await result.current.send('cancelJob', [1n]); });
+    expect(result.current.phase).toBe('rejected');
+  });
+
+  it('does not confirm a reverted equivalent replacement', async () => {
+    mocks.waitForTransactionReceipt.mockImplementationOnce(async ({ onReplaced }: { onReplaced: (replacement: unknown) => void }) => {
+      onReplaced({ transaction: { ...request, hash }, replacedTransaction: request });
+      return { status: 'reverted' };
+    });
+    const { result } = renderHook(() => useEscrowWrite());
+    await act(async () => { await result.current.send('cancelJob', [1n]); });
+    expect(result.current.phase).toBe('reverted');
   });
 });
