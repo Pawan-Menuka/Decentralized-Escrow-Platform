@@ -4,6 +4,12 @@ import JobActivity from './JobActivity';
 import type { Activity } from '../domain/escrow';
 
 vi.mock('../config/wagmi', () => ({ EXPLORER: 'https://sepolia.etherscan.io' }));
+vi.mock('../config/env', () => ({
+  env: {
+    ipfsGatewayUrl: 'https://gateway.pinata.cloud/',
+    ipfsFallbackGatewayUrl: 'https://dweb.link/',
+  },
+}));
 const activity: Activity = { id: 'dispute-1', type: 'DISPUTE_RAISED', milestoneIndex: 1, actor: '0x1000000000000000000000000000000000000001', timestamp: 1700000000, txHash: `0x${'1'.repeat(64)}`, data: 'bafy-evidence' };
 
 describe('public job activity', () => {
