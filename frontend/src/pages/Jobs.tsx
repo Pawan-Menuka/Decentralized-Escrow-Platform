@@ -6,6 +6,7 @@ import { T, mono, ticket, STATE_COLOR } from '../theme';
 import TxButton from '../components/TxButton';
 import type { Job } from '../types';
 import { JOB_STATE_LABEL } from '../domain/escrow';
+import type { Address } from 'viem';
 
 function JobCard({ job }: { job: Job & { id: number } }) {
   return (
@@ -27,11 +28,16 @@ function JobCard({ job }: { job: Job & { id: number } }) {
   );
 }
 
+function WithdrawButton({ token, amount, onDone }: { token: Address; amount: bigint; onDone: () => void }) {
+  const write = useEscrowWrite();
+  return <TxButton label={`Withdraw ${fmtAmount(amount, token)}`} fn="withdraw(token)" kind="green" phase={write.phase} error={write.error}
+    onClick={() => void write.send('withdraw', [token])} onSuccess={() => { onDone(); write.reset(); }} />;
+}
+
 export default function Jobs() {
   const { address, isConnected } = useAccount();
   const { jobs, source, fallbackReason, refetch, isLoading, isFetching, isStale, isError, error } = useJobs(address);
   const { balances, refetch: refetchBalances } = usePendingBalances();
-  const w = useEscrowWrite();
   const withdrawable = balances.filter((balance) => balance.amount > 0n);
 
   return (
@@ -40,8 +46,7 @@ export default function Jobs() {
         <div key={balance.token} style={{ border: `1px solid ${T.line}`, borderLeft: `3px solid ${T.green}`, background: 'rgba(63,190,126,0.05)', padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10 }}>
           <span style={{ fontSize: 13 }}>You have <span style={{ fontFamily: mono, color: T.greenT }}>{fmtAmount(balance.amount, balance.token)}</span> ready to collect.</span>
           <div style={{ flex: 1 }} />
-          <TxButton label={`Withdraw ${fmtAmount(balance.amount, balance.token)}`} fn="withdraw(token)" kind="green" phase={w.phase}
-            onClick={() => w.send('withdraw', [balance.token])} onSuccess={() => { void refetchBalances(); w.reset(); }} />
+          <WithdrawButton token={balance.token} amount={balance.amount} onDone={() => void refetchBalances()} />
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 4 }}>

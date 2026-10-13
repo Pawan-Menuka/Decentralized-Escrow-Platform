@@ -11,10 +11,13 @@ export type MilestoneState =
 
 export type JobRole = 'client' | 'freelancer' | 'arbitrator' | 'observer';
 export type JobState = 'FUNDED' | 'IN_PROGRESS' | 'COMPLETED' | 'DISPUTED' | 'CANCELLED';
-export type TransactionPhase = 'idle' | 'wallet' | 'pending' | 'success';
+export type TransactionPhase = 'idle' | 'simulating' | 'wallet' | 'pending' | 'success' | 'replaced' | 'rejected' | 'reverted';
 
 export interface EscrowWriteArgs {
   createJob: readonly [Address, Address, Address, readonly bigint[], bigint];
+  createJobUsd: readonly [Address, Address, readonly bigint[], bigint];
+  cancelJob: readonly [bigint];
+  acceptJob: readonly [bigint];
   withdraw: readonly [Address];
   approveMilestone: readonly [bigint, bigint];
   rejectMilestone: readonly [bigint, bigint, string];

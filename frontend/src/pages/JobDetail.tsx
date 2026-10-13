@@ -1,13 +1,18 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useJob, useRole, useEscrowWrite, useWithdrawable } from '../hooks/useEscrow';
-import { fmtAmount, net, fee, countdown, isEth } from '../lib/format';
-import { uploadToIpfs, ipfsUrl } from '../lib/ipfs';
+import { useAccount, useSignMessage, useReadContract } from 'wagmi';
+import { useJob, useRole, useEscrowWrite, useWithdrawable, useActivities } from '../hooks/useEscrow';
+import { fmtAmount, countdown, isEth } from '../lib/format';
+import { uploadToIpfs, ipfsUrls } from '../lib/ipfs';
 import { T, mono, ticket, btn, short, STATE_COLOR, STATE_LABEL } from '../theme';
 import { EXPLORER } from '../config/wagmi';
 import TxButton from '../components/TxButton';
 import StateRail from '../components/StateRail';
 import MoneyBar from '../components/MoneyBar';
+import JobActivity, { EvidenceLinks } from '../components/JobActivity';
+import { ESCROW_ABI, ESCROW_ADDRESS } from '../config/contract';
+import { displayAmount, feeAmount } from '../lib/amounts';
+import { useChainClock } from '../hooks/useChainClock';
 import type { Milestone, MilestoneState, TransactionPhase } from '../types';
 
 const LEGEND: Partial<Record<MilestoneState, string>> = {
@@ -17,7 +22,7 @@ const LEGEND: Partial<Record<MilestoneState, string>> = {
 };
 const STAMP = {
   client: ['You\u2019re the client on this job', 'You review submitted work. Approve it to pay the freelancer, ask for changes, or open a dispute. If you do nothing after a submission, it pays out automatically when the timer ends.'],
-  freelancer: ['You\u2019re the freelancer on this job', 'Submit your work milestone by milestone. Once the client approves — or the timer runs out — the money is yours to withdraw. Amounts show what you\u2019ll actually receive after the 1% fee.'],
+  freelancer: ['You\u2019re the freelancer on this job', 'Submit your work milestone by milestone. Once approved or released after the timer expires, the money is credited for withdrawal. The fee is set at payout time; estimates use the current on-chain rate.'],
   arbitrator: ['You\u2019re the arbitrator on this job', 'If a dispute is open, you choose how the frozen money is split between the two sides. Your ruling is final and executes immediately.'],
   observer: ['You\u2019re viewing as a guest', 'Everything on this page is public — no wallet needed to look around. Connect a wallet to take part. Anyone at all can trigger a payout once its timer expires.'],
 } as const;
@@ -30,15 +35,38 @@ interface UploadPanelProps {
   onConfirm: (cid: string) => void;
   onCancel: () => void;
   phase: TransactionPhase;
+  jobId: number;
+  milestoneIndex: number;
+  transactionError?: string;
+  onSuccess: () => void;
 }
 
-function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase }: UploadPanelProps) {
+function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel, phase, jobId, milestoneIndex, transactionError, onSuccess }: UploadPanelProps) {
   const [cid, setCid] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const pick = async (f: File) => {
+    setUploadError('');
+    setCid('');
+    if (!address) {
+      setUploadError('Connect the participating wallet before uploading.');
+      return;
+    }
     setUploading(true);
-    try { setCid(await uploadToIpfs(f)); } catch (error) { alert(error instanceof Error ? error.message : 'Upload failed.'); }
-    setUploading(false);
+    try {
+      setCid(await uploadToIpfs(f, {
+        wallet: address,
+        jobId,
+        milestoneIndex,
+        signMessage: (message) => signMessageAsync({ message }),
+      }));
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
   };
   return (
     <div style={{ margin: '8px 0 4px', border: `1px solid ${T.line}`, borderLeft: `3px solid ${kind === 'danger' ? T.red : T.blue}`, padding: '14px 16px', background: T.panel }}>
@@ -46,11 +74,13 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ flex: 1, border: `1px dashed ${cid ? T.green : T.dim}`, padding: '10px 14px', cursor: 'pointer', fontSize: 12, color: cid ? T.greenT : T.sub, animation: uploading ? 'pulse 1.2s infinite' : 'none' }}>
           {uploading ? 'Uploading to IPFS…' : cid ? `Attached ✓ ${cid.slice(0, 10)}…` : '⊕ Click to attach a file'}
-          <input type="file" style={{ display: 'none' }} onChange={(e) => { const picked = e.target.files?.[0]; if (picked) void pick(picked); }} />
+          <input type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={(e) => { const picked = e.target.files?.[0]; if (picked) void pick(picked); }} />
         </label>
-        <TxButton label={confirmLabel} fn={confirmFn} kind={kind} disabled={!cid} phase={phase} onClick={() => onConfirm(cid)} />
+        <TxButton label={confirmLabel} fn={confirmFn} kind={kind} disabled={!cid || uploading} phase={phase} error={transactionError} onClick={() => onConfirm(cid)} onSuccess={onSuccess} />
         <button onClick={onCancel} style={btn('quiet')}>Never mind</button>
       </div>
+      <div style={{ fontSize: 10, color: T.mut, marginTop: 8 }}>Public forever: do not upload secrets or personal information. PDF, text, PNG, JPEG, or WebP; 4 MB maximum.</div>
+      {uploadError && <div role="alert" style={{ fontSize: 11, color: T.red, marginTop: 8 }}>{uploadError}</div>}
     </div>
   );
 }
@@ -58,15 +88,17 @@ function UploadPanel({ title, confirmLabel, confirmFn, kind, onConfirm, onCancel
 export default function JobDetail() {
   const { jobId } = useParams();
   const { job, milestones, refetch, isLoading, isFetching, isStale, isError, error, source } = useJob(jobId);
+  const history = useActivities(jobId);
+  const chainClock = useChainClock();
+  const currentFee = useReadContract({ address: ESCROW_ADDRESS, abi: ESCROW_ABI, functionName: 'feeBps', query: { refetchInterval: 12_000 } });
+  const feeBps = currentFee.data === undefined ? undefined : BigInt(currentFee.data);
   const role = useRole(job);
   // Balances are per-token on-chain — scope this page's banner to the job's token.
   const { amount: withdrawable, refetch: refetchBal } = useWithdrawable(job?.token);
   const w = useEscrowWrite();
   const [open, setOpen] = useState<{ kind: string; i?: number } | null>(null);
   const [reason, setReason] = useState('');
-  const [split, setSplit] = useState(50);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const [split, setSplit] = useState(5000);
 
   if (isLoading) return <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.mut, fontFamily: mono, fontSize: 12 }}>reading authoritative contract state…</main>;
   if (isError || !job) return (
@@ -84,23 +116,31 @@ export default function JobDetail() {
   const total = milestones.reduce((a, m) => a + m.amount, 0n);
   const anyDisputed = milestones.some((m) => m.state === 'DISPUTED');
   const allDone = milestones.every((m) => ['APPROVED', 'AUTO_RELEASED', 'RESOLVED'].includes(m.state));
-  const jobState = job.cancelled ? 'Cancelled' : anyDisputed ? 'In dispute' : allDone ? 'Completed' : 'In progress';
-  const jobColor = job.cancelled ? STATE_COLOR.CANCELLED : anyDisputed ? T.red : allDone ? T.green : T.blue;
-  const done = (fnAfter?: () => void) => () => { void refetch(); void refetchBal(); setOpen(null); setReason(''); w.reset(); fnAfter?.(); };
+  const jobState = job.cancelled ? 'Cancelled' : !job.accepted ? 'Awaiting acceptance' : anyDisputed ? 'In dispute' : allDone ? 'Completed' : 'In progress';
+  const jobColor = job.cancelled ? STATE_COLOR.CANCELLED : !job.accepted ? T.amber : anyDisputed ? T.red : allDone ? T.green : T.blue;
+  const roleStamp = role === 'freelancer' && !job.accepted
+    ? ['You\u2019re the freelancer on this job', 'Accept the funded job to begin work. Until you accept it, the client can cancel and recover the full escrow.']
+    : STAMP[role];
+  const done = (fnAfter?: () => void) => () => { void refetch(); void refetchBal(); void history.refetch(); setOpen(null); setReason(''); w.reset(); fnAfter?.(); };
+  const estimateNet = (amount: bigint) => feeBps === undefined ? undefined : amount - feeAmount(amount, feeBps);
+  const exact = (amount: bigint) => displayAmount(amount, isEth(token) ? 18 : 6, isEth(token) ? 'ETH' : 'USDC');
 
   const statusFor = (m: Milestone, cd: ReturnType<typeof countdown>): string => {
     switch (m.state) {
-      case 'APPROVED': return role === 'freelancer' ? `Approved — ${fmtAmount(net(m.amount), token)} was credited to you.` : `Approved — the freelancer was paid ${fmtAmount(net(m.amount), token)}.`;
+      case 'APPROVED': return 'Approved — funds were credited to the freelancer after the fee in effect at payout time.';
       case 'AUTO_RELEASED': return 'Paid automatically — the client didn\u2019t respond in time, so the contract released it on its own.';
       case 'DISPUTED': return 'Frozen — nothing moves until the arbitrator decides the split.';
       case 'SUBMITTED':
+        if (chainClock.timestamp === undefined) return 'Waiting for a fresh Sepolia block to verify the review window. Payout eligibility is unavailable.';
         if (cd.expired) return 'The review window has closed. Anyone can now trigger the payout to the freelancer.';
         if (role === 'client') return `The work is in — take a look. If you don\u2019t respond within ${cd.long}, it pays out automatically.`;
         if (role === 'freelancer') return `You\u2019ve submitted this. The client has ${cd.long} to respond — after that, you get paid automatically.`;
         return `Work submitted — the client has ${cd.long} to respond before it pays out on its own.`;
       case 'RESOLVED': return 'Settled — the arbitrator decided the split and both sides were paid out.';
       case 'CANCELLED': return 'Never started — the job was cancelled and this money went back to the client.';
-      default: return role === 'freelancer' ? 'Up next — submit your work here whenever it\u2019s ready.' : 'Not started — the money sits safely in escrow until work is submitted.';
+      default:
+        if (!job.accepted) return role === 'freelancer' ? 'Accept this funded job before starting work.' : 'Waiting for the freelancer to accept.';
+        return role === 'freelancer' ? 'Up next — submit your work here whenever it\u2019s ready.' : 'Not started — the money sits safely in escrow until work is submitted.';
     }
   };
 
@@ -124,8 +164,8 @@ export default function JobDetail() {
           <span style={ticket(jobColor)}>{jobState}</span>
         </div>
         <div style={{ border: `1px solid ${role === 'observer' ? T.line : T.blue}`, borderLeft: `3px solid ${role === 'observer' ? T.dim : T.blue}`, padding: '12px 14px', background: role === 'observer' ? 'transparent' : 'rgba(57,160,255,0.04)' }}>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 5 }}>{STAMP[role][0]}</div>
-          <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.55 }}>{STAMP[role][1]}</div>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 5 }}>{roleStamp[0]}</div>
+          <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.55 }}>{roleStamp[1]}</div>
         </div>
         <dl style={{ margin: '22px 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '9px 14px', fontSize: 12 }}>
           <dt style={dt}>CLIENT</dt><dd style={dd}><a href={`${EXPLORER}/address/${job.client}`} target="_blank" rel="noreferrer" style={{ color: T.body }}>{short(job.client)}</a></dd>
@@ -133,8 +173,8 @@ export default function JobDetail() {
           <dt style={dt}>ARBITRATOR</dt><dd style={dd}><a href={`${EXPLORER}/address/${job.arbitrator}`} target="_blank" rel="noreferrer" style={{ color: T.body }}>{short(job.arbitrator)}</a></dd>
           <dt style={dt}>PAID IN</dt><dd style={{ ...dd, color: T.text }}>{isEth(token) ? 'ETH' : 'USDC'}</dd>
           <dt style={dt}>IN ESCROW</dt><dd style={{ ...dd, color: T.text }}>{fmtAmount(total, token)}</dd>
-          <dt style={dt}>FEE</dt><dd style={{ ...dd, fontFamily: undefined, fontSize: 12, color: T.sub }}>1% of each payout</dd>
-          <dt style={dt}>TIMER</dt><dd style={{ ...dd, fontFamily: undefined, fontSize: 12, color: T.sub }}>{Math.round(timelock / 86400)} days — then submitted work pays out automatically</dd>
+          <dt style={dt}>FEE</dt><dd style={{ ...dd, fontFamily: undefined, fontSize: 12, color: T.sub }}>{feeBps === undefined ? 'Current fee unavailable' : `${Number(feeBps) / 100}% of the freelancer payout (current estimate)`}. The owner can change the fee up to 5% before release.</dd>
+          <dt style={dt}>TIMER</dt><dd style={{ ...dd, fontFamily: undefined, fontSize: 12, color: T.sub }}>{timelock / 3600} hours — anyone may trigger release after expiry if Automation is delayed</dd>
         </dl>
         <div style={{ marginTop: 26 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: T.body, marginBottom: 4 }}>Where the money is</div>
@@ -150,22 +190,45 @@ export default function JobDetail() {
             <div style={{ flex: 1 }} />
             <TxButton label={`Withdraw ${fmtAmount(withdrawable, token)}`} fn="withdraw()" kind="green"
               phase={open?.kind === 'wd' ? w.phase : 'idle'}
-              onClick={() => { setOpen({ kind: 'wd' }); w.send('withdraw', [token]); }} onSuccess={done()} />
+              error={open?.kind === 'wd' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'wd' }); void w.send('withdraw', [token]); }} onSuccess={done()} />
+          </div>
+        )}
+        {role === 'client' && !job.accepted && !job.cancelled && (
+          <div style={{ borderBottom: `1px solid ${T.line}`, padding: '10px 22px', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 12, color: T.sub }}>The freelancer has not accepted. You can still cancel and recover the full escrow.</span>
+            <div style={{ flex: 1 }} />
+            <TxButton label="Cancel job & refund" fn="cancelJob" kind="danger" phase={open?.kind === 'cancel' ? w.phase : 'idle'} error={open?.kind === 'cancel' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'cancel' }); void w.send('cancelJob', [jid]); }} onSuccess={done()} />
+          </div>
+        )}
+        {role === 'freelancer' && !job.accepted && !job.cancelled && (
+          <div style={{ borderBottom: `1px solid ${T.line}`, padding: '10px 22px', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 12, color: T.sub }}>The escrow is funded. Accept this job to begin submitting milestones.</span>
+            <div style={{ flex: 1 }} />
+            <TxButton label="Accept job" fn="acceptJob" kind="primary" phase={open?.kind === 'accept' ? w.phase : 'idle'} error={open?.kind === 'accept' ? w.error : undefined}
+              onClick={() => { setOpen({ kind: 'accept' }); void w.send('acceptJob', [jid]); }} onSuccess={done()} />
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, padding: '18px 24px 10px' }}>
           <span style={{ fontSize: 14, fontWeight: 500 }}>Milestones</span>
           <span style={{ fontFamily: mono, fontSize: 10, color: T.dim }}>{milestones.length} milestones · {fmtAmount(total, token)} total</span>
         </div>
+        {milestones.some((milestone) => milestone.state === 'SUBMITTED') && <div role="status" style={{ padding: '0 24px 14px', fontSize: 12, color: T.sub }}>
+          {chainClock.timestamp === undefined ? `Sepolia clock ${chainClock.status}: payout expiry cannot be verified. ` : 'Countdowns use the latest observed Sepolia block, not your device clock. '}
+          Manual release remains available when a fresh block confirms expiry, even if Automation is delayed.{' '}
+          <button type="button" onClick={() => { void chainClock.refetch(); }}>Refresh chain time</button>
+        </div>}
         {milestones.map((m) => {
-          const cd = countdown(m.submittedAt, timelock, now);
+          const cd = countdown(m.submittedAt, timelock, (chainClock.timestamp ?? 0) * 1000);
           const isTx = (k: string) => open?.kind === k && open?.i === m.index;
           const acts: ReactNode[] = [];
           if (m.state === 'SUBMITTED' && !job.cancelled) {
             if (role === 'client') {
-              acts.push(<TxButton key="ap" label={`Approve & pay ${fmtAmount(net(m.amount), token)}`} fn="approveMilestone" kind="primary"
+              acts.push(<TxButton key="ap" label={feeBps === undefined ? 'Approve milestone — payout estimate unavailable' : `Approve & pay ${fmtAmount(estimateNet(m.amount), token)}`} fn="approveMilestone" kind="primary"
                 phase={isTx('approve') ? w.phase : 'idle'}
-                onClick={() => { setOpen({ kind: 'approve', i: m.index }); w.send('approveMilestone', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
+                error={isTx('approve') ? w.error : undefined}
+                onClick={() => { setOpen({ kind: 'approve', i: m.index }); void w.send('approveMilestone', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
               acts.push(<button key="rj" onClick={() => setOpen({ kind: 'reject', i: m.index })} style={btn('quiet')}>
                 <span style={{ display: 'block', fontWeight: 500 }}>Ask for changes</span>
                 <span style={{ display: 'block', fontFamily: mono, fontSize: 9, opacity: 0.55, marginTop: 2 }}>rejectMilestone</span></button>);
@@ -175,10 +238,11 @@ export default function JobDetail() {
                 <span style={{ display: 'block', fontWeight: 500 }}>Open a dispute</span>
                 <span style={{ display: 'block', fontFamily: mono, fontSize: 9, opacity: 0.55, marginTop: 2 }}>raiseDispute</span></button>);
             }
-            if (cd.expired) {
+            if (chainClock.timestamp !== undefined && cd.expired) {
               acts.push(<TxButton key="cl" label="Trigger the payout" fn="claimTimelockRelease" kind="primary"
                 phase={isTx('claim') ? w.phase : 'idle'}
-                onClick={() => { setOpen({ kind: 'claim', i: m.index }); w.send('claimTimelockRelease', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
+                error={isTx('claim') ? w.error : undefined}
+                onClick={() => { setOpen({ kind: 'claim', i: m.index }); void w.send('claimTimelockRelease', [jid, BigInt(m.index)]); }} onSuccess={done()} />);
             }
           }
           if (m.state === 'PENDING' && role === 'freelancer' && job.accepted && !job.cancelled) {
@@ -191,23 +255,25 @@ export default function JobDetail() {
               <span style={{ display: 'block', fontWeight: 500 }}>Decide the split</span>
               <span style={{ display: 'block', fontFamily: mono, fontSize: 9, opacity: 0.55, marginTop: 2 }}>resolveDispute</span></button>);
           }
-          const fShare = (m.amount * BigInt(split)) / 100n;
+          const fShare = (m.amount * BigInt(split)) / 10000n;
+          const evidence = history.activities.filter((activity) => activity.type === 'DISPUTE_RAISED' && activity.milestoneIndex === m.index);
           return (
             <div key={m.index} style={{ borderTop: `1px solid ${T.hair}`, padding: '14px 24px 12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(200px,1fr) 460px 150px 150px', gap: 16, alignItems: 'center' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(180px,1fr) minmax(300px,460px) minmax(100px,150px) minmax(100px,150px)', gap: 16, alignItems: 'center' }}>
                 <div style={{ fontFamily: mono, fontSize: 12, color: T.mut }}>{`0${m.index + 1}`}</div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>Milestone {m.index + 1}</div>
                   <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.5, marginTop: 3, textWrap: 'pretty' }}>{statusFor(m, cd)}</div>
-                  {m.cid && <div style={{ fontFamily: mono, fontSize: 10, marginTop: 4 }}><span style={{ color: T.mut }}>the work</span> <a href={ipfsUrl(m.cid)} target="_blank" rel="noreferrer">{m.cid.slice(0, 12)}… ↗</a></div>}
+                  {m.cid && <div style={{ fontFamily: mono, fontSize: 10, marginTop: 4 }}><span style={{ color: T.mut }}>the work</span> <a href={ipfsUrls(m.cid)[0]} target="_blank" rel="noreferrer">{m.cid.slice(0, 12)}… ↗</a> <a href={ipfsUrls(m.cid)[1]} target="_blank" rel="noreferrer" style={{ color: T.mut }}>backup ↗</a></div>}
+                  {evidence.map((activity) => <div key={activity.id} style={{ marginTop: 8 }}>Dispute evidence from {activity.actor ? short(activity.actor) : 'a participant'}: <EvidenceLinks activity={activity} /></div>)}
                 </div>
                 <StateRail state={m.state}
-                  countdownText={m.state === 'SUBMITTED' ? (cd.expired ? 'timer expired — anyone can trigger the payout' : `auto-pays in ${cd.text}`) : null}
-                  countdownColor={cd.expired ? T.red : T.auto} />
+                  countdownText={m.state === 'SUBMITTED' ? (chainClock.timestamp === undefined ? 'chain time unavailable — refresh to verify' : cd.expired ? 'timer expired on-chain — payout available' : `${cd.text} remaining at latest block`) : null}
+                  countdownColor={chainClock.timestamp !== undefined && cd.expired ? T.red : T.auto} />
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontFamily: mono, fontSize: 13 }}>{fmtAmount(m.amount, token)}</div>
                   {(m.state === 'SUBMITTED' || m.state === 'DISPUTED') && (
-                    <div style={{ fontFamily: mono, fontSize: 9.5, color: T.mut, marginTop: 3 }}>freelancer gets {fmtAmount(net(m.amount), token)} · 1% fee {fmtAmount(fee(m.amount), token)}</div>
+                    <div style={{ fontFamily: mono, fontSize: 9.5, color: T.mut, marginTop: 3 }}>{feeBps === undefined ? 'Payout estimate unavailable until the current fee loads.' : `Estimated full payout ${fmtAmount(estimateNet(m.amount), token)} · ${Number(feeBps) / 100}% fee ${fmtAmount(feeAmount(m.amount, feeBps), token)}`}</div>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -223,7 +289,7 @@ export default function JobDetail() {
                     <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the layout breaks on mobile — see milestone spec §2"
                       style={{ flex: 1, background: T.bg, border: `1px solid ${T.line}`, color: T.text, fontSize: 12, padding: '8px 10px' }} />
                     <TxButton label="Send it back" fn="rejectMilestone" kind="danger" disabled={!reason.trim()} phase={w.phase}
-                      onClick={() => w.send('rejectMilestone', [jid, BigInt(m.index), reason.trim()])} onSuccess={done()} />
+                      error={w.error} onClick={() => void w.send('rejectMilestone', [jid, BigInt(m.index), reason.trim()])} onSuccess={done()} />
                     <button onClick={() => setOpen(null)} style={btn('quiet')}>Never mind</button>
                   </div>
                 </div>
@@ -233,15 +299,16 @@ export default function JobDetail() {
                   <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>Drag to decide how much of this milestone each side receives. Your ruling executes immediately and can&rsquo;t be undone.</div>
                   <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
                     <span style={{ fontSize: 11, color: T.mut }}>Client</span>
-                    <input type="range" min="0" max="100" value={split} onChange={(e) => setSplit(+e.target.value)} style={{ flex: 1, accentColor: T.violet }} />
+                    <input aria-label="Freelancer share in basis points" type="range" min="0" max="10000" step="1" value={split} onChange={(e) => setSplit(+e.target.value)} style={{ flex: 1, accentColor: T.violet }} />
                     <span style={{ fontSize: 11, color: T.mut }}>Freelancer</span>
                   </div>
                   <div style={{ display: 'flex', gap: 26, marginTop: 12, fontSize: 12, alignItems: 'center' }}>
-                    <span style={{ color: T.sub }}>Freelancer gets <span style={{ fontFamily: mono, color: T.text }}>{fmtAmount(fShare, token)}</span> <span style={{ fontFamily: mono, color: T.mut }}>({fmtAmount(net(fShare), token)} after fee)</span></span>
-                    <span style={{ color: T.sub }}>Client gets back <span style={{ fontFamily: mono, color: T.text }}>{fmtAmount(m.amount - fShare, token)}</span></span>
+                    <span style={{ color: T.sub }}>Freelancer share {split} bps ({split / 100}%). Estimated net <span style={{ fontFamily: mono, color: T.text }}>{feeBps === undefined ? 'unavailable' : exact(fShare - feeAmount(fShare, feeBps))}</span></span>
+                    <span style={{ color: T.sub }}>Client gets back <span style={{ fontFamily: mono, color: T.text }}>{exact(m.amount - fShare)}</span></span>
+                    <span>Protocol fee: {feeBps === undefined ? 'unavailable' : exact(feeAmount(fShare, feeBps))}</span>
                     <div style={{ flex: 1 }} />
-                    <TxButton label={`Make it final — ${split}% to the freelancer`} fn={`resolveDispute(${split * 100} bps)`} kind="violet" phase={w.phase}
-                      onClick={() => w.send('resolveDispute', [jid, BigInt(m.index), split * 100])} onSuccess={done()} />
+                    <TxButton label={`Make it final — ${split / 100}% to the freelancer`} fn={`resolveDispute(${split} bps)`} kind="violet" phase={w.phase} disabled={feeBps === undefined}
+                      error={w.error} onClick={() => void w.send('resolveDispute', [jid, BigInt(m.index), split])} onSuccess={done()} />
                     <button onClick={() => setOpen(null)} style={btn('quiet')}>Never mind</button>
                   </div>
                 </div>
@@ -250,6 +317,9 @@ export default function JobDetail() {
                 <UploadPanel kind="primary"
                   title="Attach your finished work. It's stored on IPFS — a public file network — and only its fingerprint goes on-chain. Submitting starts the client's review clock."
                   confirmLabel="Submit it" confirmFn="submitMilestone" phase={w.phase}
+                  jobId={Number(jobId)} milestoneIndex={m.index}
+                  transactionError={w.error}
+                  onSuccess={done()}
                   onConfirm={(cid) => w.send('submitMilestone', [jid, BigInt(m.index), cid])}
                   onCancel={() => setOpen(null)} />
               )}
@@ -257,12 +327,16 @@ export default function JobDetail() {
                 <UploadPanel kind="danger"
                   title="Attach your evidence (screenshots, briefs, conversations). It goes to the arbitrator, and this milestone freezes until they rule."
                   confirmLabel="Open the dispute" confirmFn="raiseDispute" phase={w.phase}
+                  jobId={Number(jobId)} milestoneIndex={m.index}
+                  transactionError={w.error}
+                  onSuccess={done()}
                   onConfirm={(cid) => w.send('raiseDispute', [jid, BigInt(m.index), cid])}
                   onCancel={() => setOpen(null)} />
               )}
             </div>
           );
         })}
+        <JobActivity activities={history.activities} isLoading={history.isLoading} unavailable={history.fallbackReason || (history.isError ? 'Please retry the history request.' : undefined)} onRefresh={() => { void history.refetch(); }} />
       </section>
     </main>
   );

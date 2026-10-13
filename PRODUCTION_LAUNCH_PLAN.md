@@ -290,7 +290,9 @@ Create a type-safe, consistent boundary between contract, subgraph, and UI.
 
 ## Phase 5 — Secure IPFS upload service
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+Implementation is complete locally: `/api/ipfs` now uses a server-only Pinata token, exact-file wallet challenges, bounded file types and sizes, sanitized names, IP/wallet throttles, provider timeouts, safe errors, and contextual JSON manifests. The frontend signs the challenge, warns that uploads are public, and exposes configurable primary and backup gateways. Automated service and browser-client tests cover success and required failure paths. This phase remains in progress until the **[HUMAN]** Pinata/Vercel configuration and real gateway upload check are completed.
 
 ### Goal
 
@@ -325,7 +327,9 @@ Support deliverable and dispute-evidence uploads without exposing Pinata credent
 
 ## Phase 6 — Client flows
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+The client-flow implementation and automated local acceptance coverage are complete: the creation wizard validates neutral parties, exact integer milestone amounts and live contract limits; supports ETH, Chainlink-priced USD-to-ETH, and official Sepolia USDC; refreshes USD quotes immediately before simulation; and derives the two-step USDC flow from on-chain decimals and allowance. Client cancellation, approval, rejection, evidence-backed disputes, and token-aware withdrawals are connected. Every write is simulated before the wallet prompt, known custom errors have plain-language messages, and wallet, pending, replacement, rejection, revert, success, and retry states are represented without false success. Component/hook tests exercise all three funding modes and failure/retry/replacement behavior, while 76 Hardhat client-lifecycle tests cover the corresponding local contract paths. This phase remains in progress only for the real-wallet Sepolia acceptance run.
 
 ### Goal
 
@@ -370,7 +374,9 @@ Complete every action available to a client.
 
 ## Phase 7 — Freelancer, arbitrator, and public flows
 
-**Status: NOT STARTED**
+**Status: IN PROGRESS**
+
+The local frontend now filters the arbitrator desk to unresolved assigned jobs, exposes loading/error/retry states, and displays indexed job activity with transaction/account links, rejection notes, and milestone-specific dispute evidence with backup gateways. Resolution supports exact 0–10,000 basis-point splits and displays the freelancer net, client refund, and protocol fee using the current on-chain fee; historical payouts no longer assume today's fee. Confirmed deliverable/dispute submissions now refresh state and close their forms. Replacement transactions remain pending until a successful equivalent receipt, including matching ETH value, has been verified. Local verification on 2026-09-26: all 36 frontend tests, strict TypeScript, ESLint, and production build pass; existing third-party annotation and bundle-size warnings remain. Countdowns and manual-release eligibility now use fresh Sepolia block timestamps instead of the device clock. A monotonic 45-second freshness window rejects failed or stalled reads, including after page remounts through the shared query cache. The UI explains unavailable timing and offers refresh. Remaining acceptance work includes real Pinata/Vercel credentials and submit/approve/withdraw flows, deployed subgraph evidence, concurrent-dispute end-to-end checks, and live RPC outage acceptance checks for the chain clock. No deployment or live transaction was performed in this pass.
 
 ### Goal
 

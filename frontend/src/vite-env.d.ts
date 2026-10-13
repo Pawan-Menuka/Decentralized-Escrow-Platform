@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_SEPOLIA_RPC_URL?: string;
   readonly VITE_SUBGRAPH_URL?: string;
   readonly VITE_IPFS_GATEWAY_URL?: string;
+  readonly VITE_IPFS_FALLBACK_GATEWAY_URL?: string;
 }
 
 interface ImportMeta {

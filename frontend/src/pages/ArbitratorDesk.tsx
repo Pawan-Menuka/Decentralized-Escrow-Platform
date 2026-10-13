@@ -1,16 +1,17 @@
 import { Link } from 'react-router-dom';
+import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { useMyJobs } from '../hooks/useEscrow';
 import { T, mono } from '../theme';
 
 // Arbitrator desk — lists jobs where the connected wallet is the arbitrator.
 // Each dispute links into the JobDetail page, where the ruling panel lives.
-// TODO: for the evidence side-by-side view, index DisputeRaised events
-// (or query your subgraph) to fetch both parties' evidence CIDs per milestone.
 export default function ArbitratorDesk() {
   const { address } = useAccount();
-  const { jobs } = useMyJobs();
+  const { jobs, isLoading, isError, error, fallbackReason, refetch } = useMyJobs();
+  const [unresolvedOnly, setUnresolvedOnly] = useState(true);
   const mine = jobs.filter((j) => j.arbitrator?.toLowerCase() === address?.toLowerCase());
+  const visible = unresolvedOnly ? mine.filter((j) => j.state === 'DISPUTED') : mine;
   return (
     <main style={{ flex: 1, maxWidth: 1060, width: '100%', margin: '0 auto', padding: '28px 24px 60px', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
@@ -20,13 +21,22 @@ export default function ArbitratorDesk() {
       <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.5, marginBottom: 20, maxWidth: 480, textWrap: 'pretty' }}>
         Two sides trusted you to be fair when they couldn&rsquo;t agree. Read both stories, then decide the split.
       </div>
+      {address && <div style={{ marginBottom: 18 }}>
+        <label><input type="checkbox" checked={unresolvedOnly} onChange={(event) => setUnresolvedOnly(event.target.checked)} /> Unresolved disputes only</label>{' '}
+        <button type="button" onClick={() => void refetch()}>Refresh desk</button>
+        {fallbackReason && <p role="status">Using contract reads: {fallbackReason}</p>}
+      </div>}
       {!address ? (
         <div style={{ fontFamily: mono, fontSize: 11, color: T.dim, border: `1px dashed ${T.line}`, display: 'inline-block', padding: '14px 22px' }}>connect a wallet to see disputes assigned to you</div>
-      ) : mine.length === 0 ? (
-        <div style={{ fontFamily: mono, fontSize: 11, color: T.dim, border: `1px dashed ${T.line}`, display: 'inline-block', padding: '14px 22px' }}>no jobs name this wallet as arbitrator</div>
+      ) : isLoading ? (
+        <p role="status">Loading assigned disputes…</p>
+      ) : isError ? (
+        <p role="alert">Could not load your desk. {error instanceof Error ? error.message : 'Try refreshing.'}</p>
+      ) : visible.length === 0 ? (
+        <div style={{ fontFamily: mono, fontSize: 11, color: T.dim, border: `1px dashed ${T.line}`, display: 'inline-block', padding: '14px 22px' }}>{unresolvedOnly ? 'No unresolved disputes assigned to this wallet.' : 'No jobs name this wallet as arbitrator.'}</div>
       ) : (
         <div style={{ display: 'grid', gap: 10 }}>
-          {mine.map((j) => (
+          {visible.map((j) => (
             <Link key={j.id} to={`/jobs/${j.id}`} style={{ display: 'block', border: `1px solid ${T.line}`, background: T.panel, padding: '14px 18px', color: 'inherit' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <span style={{ fontSize: 14, fontWeight: 500 }}>Job #{j.id}</span>
